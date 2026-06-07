@@ -169,6 +169,8 @@ const OPEN_DIALOG_BODY_SELECTORS = [
 const VIDEO_UPLOAD_WAIT_ATTEMPTS = 1800;
 const DRAFT_CLEAR_MAX_BACKSPACES = 80;
 const DRAFT_CLEAR_CHECK_INTERVAL = 5;
+const DRAFT_CLEAR_STABLE_CHECKS = 3;
+const DRAFT_CLEAR_STABILITY_ATTEMPTS = 18;
 
 const INLINE_IMAGE_TRIGGER_SELECTORS = [
   'exeditor-toolbar-button[data-toolbar-item-of="imagePlugin"]',
@@ -289,7 +291,9 @@ const ARTICLE_COVER_UPLOAD_INPUT_SELECTORS = [
 const ARTICLE_COVER_CONFIRM_SELECTORS = [
   '.omui-dialog-wrapper.open .omui-dialog-footer button.omui-button--primary',
   '.omui-dialog-wrapper.open button:has-text("确认")',
-  '.omui-dialog-wrapper.open button:has-text("完成")'
+  '.omui-dialog-wrapper.open button:has-text("完成")',
+  '.omui-dialog-wrapper.open button:has-text("下一页")',
+  '.omui-dialog-wrapper.open button:has-text("确定")'
 ] as const;
 
 const ARTICLE_COVER_APPLIED_SELECTORS = [
@@ -878,6 +882,157 @@ function formatDraftResidualError(state: DraftResidualState): string {
   return `旧草稿未清空，已停止本次发布（${details.join("；")}）`;
 }
 
+function isDraftClear(state: DraftResidualState): boolean {
+  return state.videos === 0 && state.images === 0 && state.textLength === 0;
+}
+
+async function waitForDraftToStayClear(
+  page: PlaywrightPageLike
+): Promise<DraftResidualState> {
+  let stableClearReads = 0;
+  let lastState = await readDraftResidualState(page);
+
+  for (let attempt = 0; attempt < DRAFT_CLEAR_STABILITY_ATTEMPTS; attempt += 1) {
+    lastState = await readDraftResidualState(page);
+
+    if (isDraftClear(lastState)) {
+      stableClearReads += 1;
+
+      if (stableClearReads >= DRAFT_CLEAR_STABLE_CHECKS) {
+        return lastState;
+      }
+
+      await waitForUiTick(page);
+      continue;
+    }
+
+    stableClearReads = 0;
+    await bringPageToFront(page);
+    await forceClearEditorDraft(page);
+
+    try {
+      await page.keyboard?.press("Control+A");
+      await page.keyboard?.press("Backspace");
+      await page.keyboard?.press("Delete");
+    } catch {
+      // DOM clearing is the primary recovery path.
+    }
+
+    await waitForUiTick(page);
+  }
+
+  throw new Error(formatDraftResidualError(lastState));
+}
+
+async function readArticleCoverSignature(
+  page: PlaywrightPageLike
+): Promise<string | null> {
+  if (typeof page.evaluate !== "function") {
+    return null;
+  }
+
+  return page.evaluate<string | null>(() => {
+    const marker = "__ixbrowserReadArticleCoverSignature";
+    void marker;
+
+    const roots = [
+      document.querySelector("#articlePublish-coverinfo"),
+      document.querySelector(".articleCoverWrap-cls3i-ak"),
+      document.querySelector(".article-cover-preview")
+    ].filter((root): root is Element => root instanceof Element);
+
+    for (const root of roots) {
+      const image = root.querySelector("img");
+
+      if (image instanceof HTMLImageElement) {
+        const signature = image.currentSrc || image.src || image.getAttribute("src");
+
+        if (typeof signature === "string" && signature.trim().length > 0) {
+          return signature.trim();
+        }
+      }
+
+      if (root instanceof HTMLElement) {
+        const backgroundImage = window.getComputedStyle(root).backgroundImage;
+
+        if (backgroundImage && backgroundImage !== "none") {
+          return backgroundImage;
+        }
+      }
+    }
+
+    return null;
+  });
+}
+
+async function waitForArticleCoverPreviewChanged(
+  page: PlaywrightPageLike,
+  previousSignature: string | null
+): Promise<void> {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const currentSignature = await readArticleCoverSignature(page);
+
+    if (
+      previousSignature === null &&
+      (currentSignature !== null ||
+        (await hasExplicitVisibleSignal(page, ARTICLE_COVER_APPLIED_SELECTORS)))
+    ) {
+      return;
+    }
+
+    if (
+      previousSignature !== null &&
+      currentSignature !== null &&
+      currentSignature !== previousSignature
+    ) {
+      return;
+    }
+
+    await waitForUiTick(page);
+  }
+
+  throw new Error("文章封面上传后预览未变化");
+}
+
+async function confirmArticleCoverUntilApplied(
+  page: PlaywrightPageLike,
+  previousSignature: string | null
+): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const confirmButton = await pickVisibleLocator(
+      page,
+      ARTICLE_COVER_CONFIRM_SELECTORS,
+      "文章封面确认按钮"
+    );
+    await confirmButton.click();
+    await waitForUiTick(page);
+
+    const currentSignature = await readArticleCoverSignature(page);
+
+    if (
+      previousSignature === null &&
+      (currentSignature !== null ||
+        !(await hasAnySelector(page, OPEN_DIALOG_SELECTORS)))
+    ) {
+      return;
+    }
+
+    if (
+      previousSignature !== null &&
+      currentSignature !== null &&
+      currentSignature !== previousSignature
+    ) {
+      return;
+    }
+
+    if (!(await hasAnySelector(page, OPEN_DIALOG_SELECTORS))) {
+      break;
+    }
+  }
+
+  await waitForArticleCoverPreviewChanged(page, previousSignature);
+}
+
 async function getVisibleSignalCount(
   page: PlaywrightPageLike,
   selectors: readonly string[]
@@ -1237,6 +1392,9 @@ function createPlaywrightPageAdapter(
 
       if (!page.keyboard) {
         await forceClearEditorDraft(page);
+        const stableState = await waitForDraftToStayClear(page);
+        baselineEditorVideoCount = stableState.videos;
+        baselineEditorVideoCoverCount = stableState.videoCovers;
         return;
       }
 
@@ -1265,37 +1423,9 @@ function createPlaywrightPageAdapter(
       }
 
       await forceClearEditorDraft(page);
-
-      for (let attempt = 0; attempt < DRAFT_CLEAR_MAX_BACKSPACES; attempt += 1) {
-        const residualState = await readDraftResidualState(page);
-
-        if (
-          residualState.videos === 0 &&
-          residualState.images === 0 &&
-          residualState.textLength === 0
-        ) {
-          baselineEditorVideoCount = residualState.videos;
-          baselineEditorVideoCoverCount = residualState.videoCovers;
-          return;
-        }
-
-        await bringPageToFront(page);
-        await page.keyboard.press("Backspace");
-
-        if ((attempt + 1) % DRAFT_CLEAR_CHECK_INTERVAL === 0) {
-          await waitForUiTick(page);
-        }
-      }
-
-      const residualState = await readDraftResidualState(page);
-
-      if (
-        residualState.videos > 0 ||
-        residualState.images > 0 ||
-        residualState.textLength > 0
-      ) {
-        throw new Error(formatDraftResidualError(residualState));
-      }
+      const stableState = await waitForDraftToStayClear(page);
+      baselineEditorVideoCount = stableState.videos;
+      baselineEditorVideoCoverCount = stableState.videoCovers;
     },
     async fillTitle(title) {
       await bringPageToFront(page);
@@ -1537,6 +1667,7 @@ function createPlaywrightPageAdapter(
     },
     async setArticleCover(articleCoverPath) {
       await bringPageToFront(page);
+      const previousSignature = await readArticleCoverSignature(page);
       const trigger = await pickVisibleLocator(
         page,
         ARTICLE_COVER_TRIGGER_SELECTORS,
@@ -1550,12 +1681,7 @@ function createPlaywrightPageAdapter(
         articleCoverPath,
         "文章封面本地上传控件"
       );
-      const confirmButton = await pickVisibleLocator(
-        page,
-        ARTICLE_COVER_CONFIRM_SELECTORS,
-        "文章封面确认按钮"
-      );
-      await confirmButton.click();
+      await confirmArticleCoverUntilApplied(page, previousSignature);
     },
     async applyDeclaration() {
       await bringPageToFront(page);
