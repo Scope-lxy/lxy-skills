@@ -35,6 +35,17 @@ describe("allocateVideosForProfiles", () => {
     ]);
   });
 
+  it("allocates older videos before newer videos", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "qq-videos-"));
+    writeFileSync(join(dir, "z-old.mp4"), "");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    writeFileSync(join(dir, "a-new.mp4"), "");
+
+    const allocation = await allocateVideosForProfiles(dir, [1, 2]);
+
+    expect(allocation.map((item) => item.title)).toEqual(["z-old", "a-new"]);
+  });
+
   it("fails when there are not enough videos for the requested windows", async () => {
     const dir = mkdtempSync(join(tmpdir(), "qq-videos-"));
     writeFileSync(join(dir, "only-one.mp4"), "");
