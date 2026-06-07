@@ -925,7 +925,7 @@ describe("runCommand", () => {
     expect(firstWaitAfterUploadIndex).toBeGreaterThan(uploadVideoCoverIndex);
   });
 
-  it("reports a 60-second heartbeat while the upload dialog is still pending", async () => {
+  it("reports a 30-second heartbeat with dialog progress while the upload dialog is still pending", async () => {
     const actions: string[] = [];
     const reportProgress = vi.fn(async () => undefined);
     const fakePage = createPlaywrightLikePage(
@@ -944,7 +944,7 @@ describe("runCommand", () => {
         '.omui-dialog-wrapper.open': { count: 1, countSequence: [1, 0] },
         '.omui-dialog-wrapper.open .omui-dialog-body': {
           count: 1,
-          textContentSequence: [...Array(121).fill("上传中"), "上传成功"]
+          textContentSequence: [...Array(61).fill("上传中 59.38%"), "上传成功"]
         },
         '.omui-dialog-wrapper.open input[type="file"][multiple]': { count: 1 },
         '#articlePublish-coverinfo span:has-text("更换")': { count: 1 },
@@ -997,7 +997,7 @@ describe("runCommand", () => {
     expect(reportProgress).toHaveBeenCalledWith({
       profileId: 18,
       title: "heartbeat",
-      message: "视频上传流程仍在进行，可能持续1-30分钟；继续等待，不要结束任务"
+      message: "视频上传进度 59.38%，继续等待，不要结束任务"
     });
   });
 

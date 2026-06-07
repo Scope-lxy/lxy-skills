@@ -152,9 +152,8 @@ const VIDEO_UPLOAD_PENDING_TEXTS = ["上传中", "取消上传"] as const;
 const VIDEO_CONFIRM_RETRY_DELAY_MS = 2000;
 const UI_TICK_MS = 500;
 const DRAFT_RESTORE_WAIT_MS = 10000;
-const VIDEO_UPLOAD_HEARTBEAT_INTERVAL_MS = 60000;
-const VIDEO_UPLOAD_HEARTBEAT_MESSAGE =
-  "视频上传流程仍在进行，可能持续1-30分钟；继续等待，不要结束任务";
+const VIDEO_UPLOAD_HEARTBEAT_INTERVAL_MS = 30000;
+const VIDEO_UPLOAD_HEARTBEAT_BASE_MESSAGE = "继续等待，不要结束任务";
 
 const OPEN_DIALOG_SELECTORS = ['.omui-dialog-wrapper.open'] as const;
 const DIALOG_CLOSE_SELECTORS = [
@@ -416,6 +415,37 @@ async function waitForUiTick(page: PlaywrightPageLike): Promise<void> {
   if (typeof page.waitForTimeout === "function") {
     await page.waitForTimeout(UI_TICK_MS);
   }
+}
+
+function extractVideoUploadProgressLabel(dialogText: string | null): string | null {
+  if (typeof dialogText !== "string") {
+    return null;
+  }
+
+  const compactText = dialogText.replace(/\s+/gu, " ").trim();
+  const percentMatch = compactText.match(/([0-9]+(?:\.[0-9]+)?)\s*%/u);
+
+  if (percentMatch?.[1]) {
+    return `${percentMatch[1]}%`;
+  }
+
+  return null;
+}
+
+function buildVideoUploadHeartbeatMessage(
+  dialogText: string | null,
+  waitedPendingMs: number
+): string {
+  const progressLabel = extractVideoUploadProgressLabel(dialogText);
+
+  if (progressLabel !== null) {
+    return `视频上传进度 ${progressLabel}，${VIDEO_UPLOAD_HEARTBEAT_BASE_MESSAGE}`;
+  }
+
+  return `视频上传进度 已等待 ${Math.max(
+    30,
+    Math.round(waitedPendingMs / 1000)
+  )} 秒，${VIDEO_UPLOAD_HEARTBEAT_BASE_MESSAGE}`;
 }
 
 async function waitForDraftRestoreWindow(page: PlaywrightPageLike): Promise<void> {
@@ -1286,6 +1316,10 @@ async function waitForDialogTextToClear(
     reportProgress?: ProgressReporter;
     heartbeatIntervalMs?: number;
     heartbeatMessage?: string;
+    heartbeatMessageFactory?: (
+      dialogText: string | null,
+      waitedPendingMs: number
+    ) => string;
   } = {}
 ): Promise<void> {
   let sawPendingText = false;
@@ -1314,13 +1348,25 @@ async function waitForDialogTextToClear(
       sawPendingText = true;
       waitedPendingMs += UI_TICK_MS;
 
+      const hasHeartbeatSource =
+        typeof options.heartbeatMessageFactory === "function" ||
+        (typeof options.heartbeatMessage === "string" &&
+          options.heartbeatMessage.length > 0);
+
       if (
         options.reportProgress &&
-        typeof options.heartbeatMessage === "string" &&
-        options.heartbeatMessage.length > 0 &&
+        hasHeartbeatSource &&
         waitedPendingMs - lastHeartbeatAtMs >= heartbeatIntervalMs
       ) {
-        await options.reportProgress(options.heartbeatMessage);
+        const heartbeatMessage =
+          typeof options.heartbeatMessageFactory === "function"
+            ? options.heartbeatMessageFactory(dialogText, waitedPendingMs)
+            : options.heartbeatMessage;
+
+        if (typeof heartbeatMessage === "string" && heartbeatMessage.length > 0) {
+          await options.reportProgress(heartbeatMessage);
+        }
+
         lastHeartbeatAtMs = waitedPendingMs;
       }
 
@@ -1595,7 +1641,7 @@ function createPlaywrightPageAdapter(
         {
           reportProgress,
           heartbeatIntervalMs: VIDEO_UPLOAD_HEARTBEAT_INTERVAL_MS,
-          heartbeatMessage: VIDEO_UPLOAD_HEARTBEAT_MESSAGE
+          heartbeatMessageFactory: buildVideoUploadHeartbeatMessage
         }
       );
 
