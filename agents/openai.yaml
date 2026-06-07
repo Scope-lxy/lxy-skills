@@ -1,0 +1,13 @@
+display_name: ixBrowser Video Publish
+short_description: Run the local ixBrowser Penguin article publisher and mode switcher for commands like 发视频 1-5, /发企鹅号 1-5窗口, or 发企鹅号 正式模式.
+default_prompt: |
+  When the user sends a command such as `发视频 1-5`, `/发企鹅号 1-5窗口`, or `/发视频 1-5窗口`, run the local publisher instead of explaining the workflow.
+  Use the script installed inside the skill directory; do not search temporary workspaces and do not hard-code a machine-specific repository path. For Codex, the skill directory is `%USERPROFILE%\.agents\skills\ixBrowser_qq_publish`.
+  Before running a publish command, read `%USERPROFILE%\.agents\skills\ixBrowser_qq_publish\config\penguinhao.config.json` and tell the user the current mode first: `pause-before-publish` means `当前是开发模式，半自动发布，会停在发布按钮前等待人工确认。`; `auto-publish` means `当前是正式模式，全自动发布，检查通过后会自动点击发布。`
+  Use the exact original command string and execute:
+  powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.agents\skills\ixBrowser_qq_publish\scripts\run-qq-publisher.ps1" -Command "<user command>"
+  Return the per-window Chinese summary lines from the CLI output.
+  If a line says `已完成，停在发布前`, explicitly explain that this window is stopped at the publish button and is waiting for manual confirmation instead of auto-publishing.
+  In production mode, after a window is confirmed as published, the CLI automatically moves the used `.mp4` into `企鹅号发布/used` to avoid reusing it; pause-before-publish and failed windows are not moved.
+  If the user sends only `发企鹅号`, `发视频`, `/发企鹅号`, or `/发视频`, do not run anything yet; ask them to reply with a window range using `1` or `1-5`.
+  If the user sends `发企鹅号 开发模式`, `发企鹅号 正式模式`, `发视频 开发模式`, `发视频 正式模式`, `/发企鹅号 开发模式`, `/发企鹅号 正式模式`, `/发视频 开发模式`, or `/发视频 正式模式`, run the same local command and return only the mode switch result; do not start publishing in that turn.

@@ -1,0 +1,179 @@
+import type { PublishMode } from "../config/types.js";
+import {
+  validatePrePublishReviewState,
+  type PenguinPrePublishStateInput
+} from "./pre-publish-check.js";
+
+export interface PenguinPublishPageLike {
+  goto(
+    url: string,
+    options?: {
+      waitUntil?: "domcontentloaded";
+    }
+  ): Promise<void>;
+  ensureLoggedIn?(): Promise<void>;
+  resetDraft(): Promise<void>;
+  fillTitle(title: string): Promise<void>;
+  focusEditorBody(): Promise<void>;
+  moveEditorCursorToStart(): Promise<void>;
+  uploadVideo(videoPath: string): Promise<void>;
+  fillVideoTitle(title: string): Promise<void>;
+  setVideoCover(videoCoverPath: string): Promise<void>;
+  ensureVideoReady(): Promise<void>;
+  insertArticleImages(articleImagePaths: readonly [string, string]): Promise<void>;
+  removeEmptyContentBlocks?(): Promise<void>;
+  setArticleCover(articleCoverPath: string): Promise<void>;
+  applyDeclaration(): Promise<void>;
+  applyAiDeclaration(): Promise<void>;
+  readPrePublishState(): Promise<PenguinPrePublishStateInput>;
+  capturePrePublishEvidence?(
+    label: string,
+    evidenceDir: string
+  ): Promise<string | null>;
+  clickPublish(): Promise<void>;
+}
+
+export interface PublishArticleInput {
+  page: PenguinPublishPageLike;
+  publishUrl: string;
+  title: string;
+  videoPath: string;
+  videoCoverPath: string;
+  articleImagePaths: readonly [string, string];
+  articleCoverPath: string;
+  mode: PublishMode;
+  evidenceDir?: string;
+}
+
+export interface PublishArticleResult {
+  status: "ready-to-publish" | "published";
+  message: string;
+}
+
+const MAX_VIDEO_TITLE_LENGTH = 32;
+const MAX_REBUILD_ATTEMPTS = 2;
+
+function assertNever(value: never): never {
+  throw new Error(`不支持的发布模式: "${String(value)}"`);
+}
+
+export function toVideoPublishTitle(
+  articleTitle: string,
+  maxLength = MAX_VIDEO_TITLE_LENGTH
+): string {
+  return Array.from(articleTitle).slice(0, maxLength).join("");
+}
+
+async function buildDraft(
+  page: PenguinPublishPageLike,
+  input: {
+    publishUrl: string;
+    title: string;
+    videoPath: string;
+    videoCoverPath: string;
+    articleImagePaths: readonly [string, string];
+    articleCoverPath: string;
+  }
+): Promise<void> {
+  const {
+    publishUrl,
+    title,
+    videoPath,
+    videoCoverPath,
+    articleImagePaths,
+    articleCoverPath
+  } = input;
+  const videoTitle = toVideoPublishTitle(title);
+
+  await page.goto(publishUrl, { waitUntil: "domcontentloaded" });
+  await page.ensureLoggedIn?.();
+  await page.resetDraft();
+  await page.fillTitle(title);
+  await page.focusEditorBody();
+  await page.uploadVideo(videoPath);
+  await page.fillVideoTitle(videoTitle);
+  await page.setVideoCover(videoCoverPath);
+  await page.ensureVideoReady();
+  await page.focusEditorBody();
+  await page.insertArticleImages(articleImagePaths);
+  await page.removeEmptyContentBlocks?.();
+  await page.setArticleCover(articleCoverPath);
+  await page.applyDeclaration();
+  await page.applyAiDeclaration();
+}
+
+export async function publishArticle(
+  input: PublishArticleInput
+): Promise<PublishArticleResult> {
+  const {
+    page,
+    publishUrl,
+    title,
+    videoPath,
+    videoCoverPath,
+    articleImagePaths,
+    articleCoverPath,
+    mode,
+    evidenceDir
+  } = input;
+
+  let lastIssues: string[] = [];
+  let lastEvidencePath: string | null = null;
+
+  for (let attempt = 0; attempt < MAX_REBUILD_ATTEMPTS; attempt += 1) {
+    await buildDraft(page, {
+      publishUrl,
+      title,
+      videoPath,
+      videoCoverPath,
+      articleImagePaths,
+      articleCoverPath
+    });
+
+    const state = await page.readPrePublishState();
+    const issues = validatePrePublishReviewState(state, {
+      expectedTitle: title
+    });
+
+    if (issues.length === 0) {
+      switch (mode) {
+        case "pause-before-publish":
+          return {
+            status: "ready-to-publish",
+            message: "已完成，停在发布前"
+          };
+        case "auto-publish":
+          await page.clickPublish();
+
+          return {
+            status: "published",
+            message: "已自动发布"
+          };
+        default:
+          return assertNever(mode);
+      }
+    }
+
+    lastIssues = issues;
+
+    if (
+      typeof evidenceDir === "string" &&
+      evidenceDir.trim().length > 0 &&
+      typeof page.capturePrePublishEvidence === "function"
+    ) {
+      lastEvidencePath =
+        (await page.capturePrePublishEvidence(
+          `pre-publish-review-failed-attempt-${attempt + 1}`,
+          evidenceDir
+        )) ?? null;
+    }
+  }
+
+  const detailMessage = [...lastIssues, "已自动重试1次"].join("；");
+
+  throw new Error(
+    lastEvidencePath === null
+      ? detailMessage
+      : `${detailMessage}；现场截图=${lastEvidencePath}`
+  );
+}

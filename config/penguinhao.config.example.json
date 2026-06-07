@@ -1,0 +1,6 @@
+{
+  "ixBrowserApiBaseUrl": "http://127.0.0.1:53200",
+  "penguinPublishUrl": "https://om.qq.com/main/creation/article",
+  "assetsRoot": "C:/企鹅号发布",
+  "mode": "pause-before-publish"
+}
