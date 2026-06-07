@@ -73,4 +73,10 @@ describe("parseWindowRange", () => {
   it("rejects unsupported commands", () => {
     expect(() => parseWindowRange("/别的命令 1窗口")).toThrow("命令格式不正确");
   });
+
+  it("rejects commands without a space before the window number to avoid accidental triggers", () => {
+    expect(() => parseWindowRange("发视频1")).toThrow("命令格式不正确");
+    expect(() => parseWindowRange("发视频1-10")).toThrow("命令格式不正确");
+    expect(() => parseWindowRange("发企鹅号3窗口")).toThrow("命令格式不正确");
+  });
 });
