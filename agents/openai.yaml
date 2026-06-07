@@ -6,6 +6,7 @@ default_prompt: |
   Before running a publish command, read `config\penguinhao.config.json` from the current skill installation directory and tell the user the current mode first: `pause-before-publish` means `当前是开发模式，半自动发布，会停在发布按钮前等待人工确认。`; `auto-publish` means `当前是正式模式，全自动发布，检查通过后会自动点击发布。`
   Use the exact original command string and execute:
   powershell -ExecutionPolicy Bypass -File .\scripts\run-qq-publisher.ps1 -Command "<user command>"
+  After the publish command has been started, do not launch the same publish command a second time in the same session just because the local shell view timed out or stayed quiet. Video upload can legitimately take 1-30 minutes. In that situation, treat the existing run as still active, keep waiting, inspect the current terminal/log output if needed, and report the waiting state to the user instead of retrying.
   Return the per-window Chinese summary lines from the CLI output.
   If a line says `已完成，停在发布前`, explicitly explain that this window is stopped at the publish button and is waiting for manual confirmation instead of auto-publishing.
   The current editor-building order is: force-clear the title field and editor body, insert the two article images first, move the editor cursor to the start, upload the video, then clean blank editor blocks. The final content order must still be video -> image 1 -> image 2.

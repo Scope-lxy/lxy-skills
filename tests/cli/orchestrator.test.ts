@@ -1507,6 +1507,38 @@ describe("runCommand", () => {
 });
 
 describe("runCli", () => {
+  it("returns a clear error instead of starting a second publish run when another run is active", async () => {
+    vi.doMock("../../src/config/load-config.js", () => ({
+      loadConfig: async () => ({
+        ixBrowserApiBaseUrl: "http://127.0.0.1:53200",
+        penguinPublishUrl: "https://om.qq.com/article/publish",
+        assetsRoot: "C:/企鹅号发布",
+        mode: "pause-before-publish" as const
+      })
+    }));
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const { runCli } = await import("../../src/cli.js");
+
+    const exitCode = await runCli(["发视频", "4-5"], {
+      acquirePublishRunLock: async () => {
+        throw new Error("已有发布任务在运行（命令=发视频 4-5），请等待当前任务结束，不要重试");
+      }
+    });
+
+    expect(exitCode).toBe(1);
+    expect(logSpy).toHaveBeenNthCalledWith(
+      1,
+      "当前是开发模式，半自动发布，可切换到正式模式。"
+    );
+    expect(errorSpy).toHaveBeenCalledWith(
+      "已有发布任务在运行（命令=发视频 4-5），请等待当前任务结束，不要重试"
+    );
+  });
+
   it("prints the current mode hint before running a publish command", async () => {
     vi.doMock("../../src/config/load-config.js", () => ({
       loadConfig: async () => ({

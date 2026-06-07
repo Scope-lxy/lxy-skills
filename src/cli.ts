@@ -22,6 +22,7 @@ import {
   type PublishArticleResult,
   type PenguinPublishPageLike
 } from "./penguin/publish-article.js";
+import { acquirePublishRunLock as acquireActualPublishRunLock } from "./runtime/publish-run-lock.js";
 import type { RuntimeConfig } from "./config/types.js";
 import type { PenguinPrePublishStateInput } from "./penguin/pre-publish-check.js";
 import type { WindowRunResult } from "./types/run-result.js";
@@ -312,6 +313,10 @@ export interface RunCommandDependencies {
   connectBrowser: (endpoint: string) => Promise<BrowserLike>;
   publishArticle: PublishArticleDependency;
   writeRunEvent: typeof writeRunEvent;
+  acquirePublishRunLock: (
+    assetsRoot: string,
+    command: string
+  ) => Promise<() => Promise<void> | void>;
   reportProgress: (
     update: PublishProgressUpdate
   ) => Promise<void> | void;
@@ -1721,6 +1726,7 @@ const defaultDependencies: RunCommandDependencies = {
   connectBrowser: defaultConnectBrowser,
   publishArticle: runPublishArticle,
   writeRunEvent,
+  acquirePublishRunLock: async () => async () => undefined,
   reportProgress: async () => undefined
 };
 
@@ -1734,6 +1740,7 @@ export async function runCommandReport(
   };
   const config = await deps.loadConfig(DEFAULT_CONFIG_PATH);
   const parsedCommand = parsePublishCommand(command);
+  let releasePublishRunLock: (() => Promise<void> | void) | null = null;
 
   if (parsedCommand.kind === "mode-switch") {
     const nextConfig: RuntimeConfig = {
@@ -1749,136 +1756,147 @@ export async function runCommandReport(
   }
 
   const profileIds = parsedCommand.profileIds;
-  const allocations = await deps.allocateVideosForProfiles(
-    join(config.assetsRoot, "videos"),
-    profileIds
+  releasePublishRunLock = await deps.acquirePublishRunLock(
+    config.assetsRoot,
+    command
   );
-  const coverDir = join(config.assetsRoot, "video-covers");
-  const logFile = buildLogFilePath(join(config.assetsRoot, "logs"));
-  const summaries: string[] = [];
-  const results: WindowRunResult[] = [];
 
-  for (const allocation of allocations) {
-    let coverPath: string | null = null;
-    let articleAssets: PickedArticleAssetSet | null = null;
-    let browser: BrowserLike | undefined;
-    let result: WindowRunResult = {
-      profileId: allocation.profileId,
-      title: allocation.title,
-      videoPath: allocation.videoPath,
-      coverPath,
-      status: "failed",
-      message: "未开始执行"
+  try {
+    const allocations = await deps.allocateVideosForProfiles(
+      join(config.assetsRoot, "videos"),
+      profileIds
+    );
+    const coverDir = join(config.assetsRoot, "video-covers");
+    const logFile = buildLogFilePath(join(config.assetsRoot, "logs"));
+    const summaries: string[] = [];
+    const results: WindowRunResult[] = [];
+
+    for (const allocation of allocations) {
+      let coverPath: string | null = null;
+      let articleAssets: PickedArticleAssetSet | null = null;
+      let browser: BrowserLike | undefined;
+      let result: WindowRunResult = {
+        profileId: allocation.profileId,
+        title: allocation.title,
+        videoPath: allocation.videoPath,
+        coverPath,
+        status: "failed",
+        message: "未开始执行"
+      };
+
+      try {
+        coverPath = await deps.pickRandomCover(coverDir, allocation.videoPath);
+        articleAssets = await deps.pickArticleAssetSet(
+          join(config.assetsRoot, "pictures"),
+          ""
+        );
+        const profile = await deps.openProfile(
+          config.ixBrowserApiBaseUrl,
+          allocation.profileId
+        );
+        const endpoint = resolveBrowserEndpoint(profile);
+        browser = await deps.connectBrowser(endpoint);
+        const page = await getBrowserPage(browser);
+        const publishResult = await deps.publishArticle({
+          page,
+          publishUrl: config.penguinPublishUrl,
+          title: allocation.title,
+          videoPath: allocation.videoPath,
+          videoCoverPath: coverPath,
+          articleImagePaths: [
+            articleAssets.picture1Path,
+            articleAssets.picture2Path
+          ],
+          articleCoverPath: articleAssets.articleCoverPath,
+          mode: config.mode,
+          evidenceDir: join(config.assetsRoot, "logs"),
+          reportProgress: async (message) => {
+            await deps.reportProgress({
+              profileId: allocation.profileId,
+              title: allocation.title,
+              message
+            });
+          }
+        });
+
+        result = {
+          profileId: allocation.profileId,
+          title: allocation.title,
+          videoPath: allocation.videoPath,
+          coverPath,
+          status: publishResult.status,
+          message: publishResult.message
+        };
+
+        if (publishResult.status === "published") {
+          try {
+            await deps.movePublishedVideoToUsed(
+              allocation.videoPath,
+              config.assetsRoot
+            );
+          } catch (moveError) {
+            result = {
+              ...result,
+              status: "failed",
+              message: `${publishResult.message}；移动已发布视频失败：${formatErrorMessage(moveError)}`
+            };
+          }
+        }
+      } catch (error) {
+        result = {
+          profileId: allocation.profileId,
+          title: allocation.title,
+          videoPath: allocation.videoPath,
+          coverPath,
+          status: "failed",
+          message: formatErrorMessage(error)
+        };
+      } finally {
+        if (browser) {
+          try {
+            await browser.close();
+          } catch (closeError) {
+            result = {
+              profileId: allocation.profileId,
+              title: allocation.title,
+              videoPath: allocation.videoPath,
+              coverPath,
+              status: "failed",
+              message:
+                result.status === "failed"
+                  ? `${result.message}；关闭浏览器失败：${formatErrorMessage(closeError)}`
+                  : `关闭浏览器失败：${formatErrorMessage(closeError)}`
+            };
+          }
+        }
+      }
+
+      try {
+        await deps.writeRunEvent(logFile, result);
+      } catch (logError) {
+        result = {
+          ...result,
+          status: "failed",
+          message:
+            result.status === "failed"
+              ? `${result.message}；写日志失败：${formatErrorMessage(logError)}`
+              : `写日志失败：${formatErrorMessage(logError)}`
+        };
+      }
+
+      summaries.push(formatSummary(result));
+      results.push(result);
+    }
+
+    return {
+      summaries,
+      results
     };
-
-    try {
-      coverPath = await deps.pickRandomCover(coverDir, allocation.videoPath);
-      articleAssets = await deps.pickArticleAssetSet(
-        join(config.assetsRoot, "pictures"),
-        ""
-      );
-      const profile = await deps.openProfile(
-        config.ixBrowserApiBaseUrl,
-        allocation.profileId
-      );
-      const endpoint = resolveBrowserEndpoint(profile);
-      browser = await deps.connectBrowser(endpoint);
-      const page = await getBrowserPage(browser);
-      const publishResult = await deps.publishArticle({
-        page,
-        publishUrl: config.penguinPublishUrl,
-        title: allocation.title,
-        videoPath: allocation.videoPath,
-        videoCoverPath: coverPath,
-        articleImagePaths: [
-          articleAssets.picture1Path,
-          articleAssets.picture2Path
-        ],
-        articleCoverPath: articleAssets.articleCoverPath,
-        mode: config.mode,
-        evidenceDir: join(config.assetsRoot, "logs"),
-        reportProgress: async (message) => {
-          await deps.reportProgress({
-            profileId: allocation.profileId,
-            title: allocation.title,
-            message
-          });
-        }
-      });
-
-      result = {
-        profileId: allocation.profileId,
-        title: allocation.title,
-        videoPath: allocation.videoPath,
-        coverPath,
-        status: publishResult.status,
-        message: publishResult.message
-      };
-
-      if (publishResult.status === "published") {
-        try {
-          await deps.movePublishedVideoToUsed(
-            allocation.videoPath,
-            config.assetsRoot
-          );
-        } catch (moveError) {
-          result = {
-            ...result,
-            status: "failed",
-            message: `${publishResult.message}；移动已发布视频失败：${formatErrorMessage(moveError)}`
-          };
-        }
-      }
-    } catch (error) {
-      result = {
-        profileId: allocation.profileId,
-        title: allocation.title,
-        videoPath: allocation.videoPath,
-        coverPath,
-        status: "failed",
-        message: formatErrorMessage(error)
-      };
-    } finally {
-      if (browser) {
-        try {
-          await browser.close();
-        } catch (closeError) {
-          result = {
-            profileId: allocation.profileId,
-            title: allocation.title,
-            videoPath: allocation.videoPath,
-            coverPath,
-            status: "failed",
-            message:
-              result.status === "failed"
-                ? `${result.message}；关闭浏览器失败：${formatErrorMessage(closeError)}`
-                : `关闭浏览器失败：${formatErrorMessage(closeError)}`
-          };
-        }
-      }
+  } finally {
+    if (releasePublishRunLock !== null) {
+      await releasePublishRunLock();
     }
-
-    try {
-      await deps.writeRunEvent(logFile, result);
-    } catch (logError) {
-      result = {
-        ...result,
-        status: "failed",
-        message:
-          result.status === "failed"
-            ? `${result.message}；写日志失败：${formatErrorMessage(logError)}`
-            : `写日志失败：${formatErrorMessage(logError)}`
-      };
-    }
-
-    summaries.push(formatSummary(result));
-    results.push(result);
   }
-
-  return {
-    summaries,
-    results
-  };
 }
 
 export async function runCommand(
@@ -1889,7 +1907,10 @@ export async function runCommand(
   return report.summaries;
 }
 
-export async function runCli(argv: readonly string[]): Promise<number> {
+export async function runCli(
+  argv: readonly string[],
+  overrides: Partial<RunCommandDependencies> = {}
+): Promise<number> {
   const command = argv.join(" ").trim();
 
   if (command.length === 0) {
@@ -1906,6 +1927,7 @@ export async function runCli(argv: readonly string[]): Promise<number> {
     }
 
     const report = await runCommandReport(command, {
+      ...overrides,
       reportProgress: async ({ profileId, title, message }) => {
         console.log(`${profileId}窗口：${title} ${message}`);
       }
@@ -1925,6 +1947,10 @@ export async function runCli(argv: readonly string[]): Promise<number> {
 const currentFilePath = fileURLToPath(import.meta.url);
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(currentFilePath)) {
-  const exitCode = await runCli(process.argv.slice(2));
+  const exitCode = await runCli(process.argv.slice(2), {
+    acquirePublishRunLock: async (assetsRoot, command) => {
+      return acquireActualPublishRunLock(join(assetsRoot, "logs"), command);
+    }
+  });
   process.exitCode = exitCode;
 }
