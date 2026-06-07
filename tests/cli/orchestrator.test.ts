@@ -689,7 +689,7 @@ describe("runCommand", () => {
     expect(actions).toContain(
       'click:div.ProseMirror.ExEditor-basic[contenteditable="true"]:0'
     );
-    expect(actions).toContain("keyboard:Control+End");
+    expect(actions).toContain("keyboard:End");
     expect(actions).toContain("waitForTimeout:500");
     const confirmIndexes = actions
       .map((action, index) => ({ action, index }))
@@ -720,7 +720,7 @@ describe("runCommand", () => {
       "click:button.exeditor-menu-basic-video:0"
     );
     expect(insertImageTriggerIndex).toBeLessThan(videoTriggerIndex);
-    expect(actions).toContain("keyboard:ArrowLeft");
+    expect(actions).toContain("keyboard:ArrowUp");
     expect(actions).toContain(
       "setInputFiles:input[name=\"Filedata\"][type=\"file\"]:0:C:/企鹅号发布/videos/happy.mp4"
     );
@@ -1435,6 +1435,12 @@ describe("runCommand", () => {
     expect(restoreWaitIndex).toBeLessThan(forceClearEditorIndex);
     expect(actions).toContain("forceClearTitle");
     expect(actions).toContain("forceClearEditorDraft");
+    expect(actions).toContain("keyboard:ArrowDown");
+    expect(actions).toContain("keyboard:ArrowUp");
+    expect(actions.indexOf("keyboard:ArrowDown")).toBeLessThan(
+      forceClearEditorIndex
+    );
+    expect(actions.indexOf("keyboard:ArrowUp")).toBeLessThan(forceClearEditorIndex);
   });
 
   it("keeps clearing when an old draft reappears after the first empty check", async () => {

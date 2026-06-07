@@ -417,6 +417,82 @@ async function waitForUiTick(page: PlaywrightPageLike): Promise<void> {
   }
 }
 
+type EditorBoundary = "start" | "end";
+
+async function moveEditorSelectionToBoundary(
+  page: PlaywrightPageLike,
+  boundary: EditorBoundary
+): Promise<void> {
+  if (!page.keyboard) {
+    return;
+  }
+
+  await page.keyboard.press("Control+A");
+  await page.keyboard.press(boundary === "end" ? "ArrowDown" : "ArrowUp");
+}
+
+async function clearEditorDraftByKeyboard(page: PlaywrightPageLike): Promise<void> {
+  if (!page.keyboard) {
+    return;
+  }
+
+  await ensureEditorCaretReady(page);
+
+  try {
+    await moveEditorSelectionToBoundary(page, "end");
+    await page.keyboard.press("Delete");
+  } catch {
+    // Keyboard selection is best-effort; DOM clearing is the fallback below.
+  }
+
+  try {
+    await moveEditorSelectionToBoundary(page, "start");
+    await page.keyboard.press("Backspace");
+  } catch {
+    // Keyboard selection is best-effort; DOM clearing is the fallback below.
+  }
+
+  await waitForUiTick(page);
+}
+
+async function ensureEditorCaretReady(page: PlaywrightPageLike): Promise<void> {
+  const locator = await pickVisibleLocator(page, EDITOR_BODY_SELECTORS, "正文编辑区");
+  const paragraphMatch = await findVisibleLocatorGroup(page, [
+    'div.ProseMirror.ExEditor-basic[contenteditable="true"] p',
+    '[data-exeditor-root][contenteditable="true"] p',
+    'div.ProseMirror[contenteditable="true"] p'
+  ]);
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    await bringPageToFront(page);
+
+    if (paragraphMatch !== null) {
+      await paragraphMatch.locator
+        .nth(Math.max(0, paragraphMatch.count - 1))
+        .click();
+    } else {
+      await locator.click();
+    }
+
+    try {
+      await page.keyboard?.press("End");
+    } catch {
+      // ignore
+    }
+
+    const caretState = await readEditorCaretState(page);
+
+    if (caretState?.ready ?? true) {
+      return;
+    }
+
+    await locator.click();
+    await waitForUiTick(page);
+  }
+
+  throw new Error("正文光标未准备好，已自动重试恢复失败");
+}
+
 function extractVideoUploadProgressLabel(dialogText: string | null): string | null {
   if (typeof dialogText !== "string") {
     return null;
@@ -950,15 +1026,8 @@ async function waitForDraftToStayClear(
 
     stableClearReads = 0;
     await bringPageToFront(page);
+    await clearEditorDraftByKeyboard(page);
     await forceClearEditorDraft(page);
-
-    try {
-      await page.keyboard?.press("Control+A");
-      await page.keyboard?.press("Backspace");
-      await page.keyboard?.press("Delete");
-    } catch {
-      // DOM clearing is the primary recovery path.
-    }
 
     await waitForUiTick(page);
   }
@@ -1463,21 +1532,7 @@ function createPlaywrightPageAdapter(
       await editor.click();
 
       try {
-        await page.keyboard.press("Control+A");
-        await page.keyboard.press("Backspace");
-        await page.keyboard.press("Delete");
-      } catch {
-        // ignore
-      }
-
-      try {
-        await page.keyboard.press("Control+End");
-      } catch {
-        // ignore
-      }
-
-      try {
-        await page.keyboard.press("End");
+        await clearEditorDraftByKeyboard(page);
       } catch {
         // ignore
       }
@@ -1507,49 +1562,26 @@ function createPlaywrightPageAdapter(
       }
     },
     async focusEditorBody() {
-      const locator = await pickVisibleLocator(page, EDITOR_BODY_SELECTORS, "正文编辑区");
-      const paragraphMatch = await findVisibleLocatorGroup(page, [
-        'div.ProseMirror.ExEditor-basic[contenteditable="true"] p',
-        '[data-exeditor-root][contenteditable="true"] p',
-        'div.ProseMirror[contenteditable="true"] p'
-      ]);
-
-      for (let attempt = 0; attempt < 8; attempt += 1) {
-        await bringPageToFront(page);
-
-        if (paragraphMatch !== null) {
-          await paragraphMatch.locator
-            .nth(Math.max(0, paragraphMatch.count - 1))
-            .click();
-        } else {
-          await locator.click();
-        }
-
-        try {
-          await page.keyboard?.press("End");
-        } catch {
-          // ignore
-        }
-
-        const caretState = await readEditorCaretState(page);
-
-        if (caretState?.ready ?? true) {
-          return;
-        }
-
-        await locator.click();
-        await waitForUiTick(page);
-      }
-
-      throw new Error("正文光标未准备好，已自动重试恢复失败");
+      await ensureEditorCaretReady(page);
     },
     async moveEditorCursorToStart() {
       if (!page.keyboard) {
         throw new Error("浏览器页面不支持键盘操作，无法移动正文光标");
       }
 
-      const locator = await pickVisibleLocator(page, EDITOR_BODY_SELECTORS, "正文编辑区");
-      await locator.click();
+      await ensureEditorCaretReady(page);
+
+      try {
+        await moveEditorSelectionToBoundary(page, "start");
+      } catch {
+        // ignore
+      }
+
+      const startState = await readEditorStartState(page);
+
+      if (startState?.atStart ?? false) {
+        return;
+      }
 
       for (let attempt = 0; attempt < DRAFT_CLEAR_MAX_BACKSPACES; attempt += 1) {
         await bringPageToFront(page);
