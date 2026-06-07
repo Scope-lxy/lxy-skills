@@ -828,6 +828,89 @@ describe("runCommand", () => {
     );
   });
 
+  it("fills the video title and uploads the video cover before entering the upload wait", async () => {
+    const actions: string[] = [];
+    const fakePage = createPlaywrightLikePage(
+      {
+        'span.omui-inputautogrowing__inner[contenteditable="true"][data-placeholder*="标题"]': { count: 1 },
+        'div.ProseMirror.ExEditor-basic[contenteditable="true"]': { count: 1 },
+        '.ProseMirror div.video[data-widget="video"]': { count: 1, countSequence: [0, 1] },
+        '.ProseMirror div.video[data-widget="video"] video[poster]': {
+          count: 1,
+          countSequence: [0, 1]
+        },
+        'button.exeditor-menu-basic-video': { count: 1 },
+        'input[name="Filedata"][type="file"]': { count: 1, visible: [true] },
+        'input[placeholder="请输入标题名称"]': { count: 1 },
+        'button:has-text("上传封面")': { count: 1 },
+        '.omui-dialog-wrapper.open': { count: 1, countSequence: [1, 0] },
+        '.omui-dialog-wrapper.open input[type="file"][multiple]': { count: 1 },
+        '#articlePublish-coverinfo span:has-text("更换")': { count: 1 },
+        '.omui-dialog-wrapper.open li.omui-tab__label': { count: 2 },
+        '.omui-dialog-wrapper.open input[type="file"][accept*="image"]': { count: 1 },
+        '.omui-dialog-wrapper.open .omui-dialog-footer button.omui-button--primary': { count: 1 },
+        'exeditor-toolbar-button[data-toolbar-item-of="imagePlugin"]': { count: 1 },
+        '#articlePublish-selfDeclaration button.omui-button--dashed': { count: 1 },
+        'label:has-text("剧情演绎，仅供娱乐")': { count: 1 },
+        '.omui-dialog-wrapper.open button:has-text("确认")': { count: 1 },
+        '#articlePublish-resourceAigcMarkInfo a': { count: 1 },
+        '.omui-dialog-wrapper.open button:has-text("提交")': { count: 1 },
+        'text=已完成AI生成素材声明': {
+          count: 1,
+          countSequence: [...Array(20).fill(0), 1]
+        },
+        'text=剧情演绎，仅供娱乐': {
+          count: 1,
+          countSequence: [...Array(20).fill(0), 1]
+        },
+        '[data-video-ready="true"]': { count: 1 },
+        '[data-video-cover-ready="true"]': { count: 1 },
+        '[data-inline-image="true"]': { count: 2 },
+        '[data-article-cover-applied="true"]': { count: 1 }
+      },
+      actions
+    );
+
+    const summary = await runCommand("/发企鹅号 17窗口", {
+      loadConfig: async () => ({
+        ixBrowserApiBaseUrl: "http://127.0.0.1:53200",
+        penguinPublishUrl: "https://om.qq.com/article/publish",
+        assetsRoot: "C:/企鹅号发布",
+        mode: "pause-before-publish" as const
+      }),
+      allocateVideosForProfiles: async () => [
+        { profileId: 17, videoPath: "C:/企鹅号发布/videos/parallel.mp4", title: "parallel" }
+      ],
+      pickRandomCover: async () => "C:/企鹅号发布/video-covers/parallel.png",
+      pickArticleAssetSet: async () => createArticleAssets(),
+      openProfile: async () => ({
+        ws: "ws://profile-17"
+      }),
+      connectBrowser: vi.fn().mockResolvedValue(createBrowser(fakePage.page)),
+      writeRunEvent: createWriteRunEventMock()
+    });
+
+    expect(summary).toEqual(["17窗口：parallel 已完成，停在发布前"]);
+
+    const uploadVideoIndex = actions.indexOf(
+      "setInputFiles:input[name=\"Filedata\"][type=\"file\"]:0:C:/企鹅号发布/videos/parallel.mp4"
+    );
+    const fillVideoTitleIndex = actions.indexOf(
+      'fill:input[placeholder="请输入标题名称"]:0:parallel'
+    );
+    const uploadVideoCoverIndex = actions.indexOf(
+      "setInputFiles:.omui-dialog-wrapper.open input[type=\"file\"][accept*=\"image\"]:0:C:/企鹅号发布/video-covers/parallel.png"
+    );
+    const firstWaitAfterUploadIndex = actions.findIndex((action, index) => {
+      return index > uploadVideoIndex && action.startsWith("waitForTimeout:");
+    });
+
+    expect(uploadVideoIndex).toBeGreaterThan(-1);
+    expect(fillVideoTitleIndex).toBeGreaterThan(uploadVideoIndex);
+    expect(uploadVideoCoverIndex).toBeGreaterThan(fillVideoTitleIndex);
+    expect(firstWaitAfterUploadIndex).toBeGreaterThan(uploadVideoCoverIndex);
+  });
+
   it("brings the page to front and waits for a real editor caret before uploading video", async () => {
     const actions: string[] = [];
     const fakePage = createPlaywrightLikePage(
@@ -1399,6 +1482,78 @@ describe("runCli", () => {
       "当前是开发模式，半自动发布，可切换到正式模式。"
     );
     expect(logSpy).toHaveBeenNthCalledWith(2, "1窗口：a 已完成，停在发布前");
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+
+  it("prints live progress before the final summary so long uploads do not look stalled", async () => {
+    vi.doMock("../../src/config/load-config.js", () => ({
+      loadConfig: async () => ({
+        ixBrowserApiBaseUrl: "http://127.0.0.1:53200",
+        penguinPublishUrl: "https://om.qq.com/article/publish",
+        assetsRoot: "C:/企鹅号发布",
+        mode: "pause-before-publish" as const
+      })
+    }));
+    vi.doMock("../../src/config/save-config.js", () => ({
+      saveConfig: async () => undefined
+    }));
+    vi.doMock("../../src/assets/video-pool.js", () => ({
+      allocateVideosForProfiles: async () => [
+        { profileId: 3, videoPath: "C:/企鹅号发布/videos/a.mp4", title: "a" }
+      ],
+      movePublishedVideoToUsed: async () => "C:/企鹅号发布/used/a.mp4"
+    }));
+    vi.doMock("../../src/assets/cover-picker.js", () => ({
+      pickRandomCover: async () => "C:/企鹅号发布/video-covers/cover.png"
+    }));
+    vi.doMock("../../src/assets/article-image-picker.js", () => ({
+      pickArticleAssetSet: async () => createArticleAssets()
+    }));
+    vi.doMock("../../src/ixbrowser/open-profile.js", () => ({
+      openProfile: async () => ({
+        ws: "ws://profile-3"
+      })
+    }));
+    vi.doMock("../../src/logs/run-logger.js", () => ({
+      buildLogFilePath: () => "C:/企鹅号发布/logs/run.jsonl",
+      writeRunEvent: async () => undefined
+    }));
+    vi.doMock("../../src/penguin/publish-article.js", () => ({
+      publishArticle: async (input: {
+        reportProgress?: (message: string) => Promise<void> | void;
+      }) => {
+        await input.reportProgress?.("视频标题和封面已设置，正在等待上传完成");
+        return {
+          status: "ready-to-publish" as const,
+          message: "已完成，停在发布前"
+        };
+      }
+    }));
+    vi.doMock("playwright", () => ({
+      chromium: {
+        connectOverCDP: async () =>
+          createBrowser(createPenguinPublishPage("page-3"))
+      }
+    }));
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const { runCli } = await import("../../src/cli.js");
+
+    const exitCode = await runCli(["发视频", "3"]);
+
+    expect(exitCode).toBe(0);
+    expect(logSpy).toHaveBeenNthCalledWith(
+      1,
+      "当前是开发模式，半自动发布，可切换到正式模式。"
+    );
+    expect(logSpy).toHaveBeenNthCalledWith(
+      2,
+      "3窗口：a 视频标题和封面已设置，正在等待上传完成"
+    );
+    expect(logSpy).toHaveBeenNthCalledWith(3, "3窗口：a 已完成，停在发布前");
     expect(errorSpy).not.toHaveBeenCalled();
   });
 

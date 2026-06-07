@@ -43,6 +43,7 @@ export interface PublishArticleInput {
   articleCoverPath: string;
   mode: PublishMode;
   evidenceDir?: string;
+  reportProgress?: (message: string) => Promise<void> | void;
 }
 
 export interface PublishArticleResult {
@@ -74,6 +75,7 @@ async function buildDraft(
     videoCoverPath: string;
     articleImagePaths: readonly [string, string];
     articleCoverPath: string;
+    reportProgress?: (message: string) => Promise<void> | void;
   }
 ): Promise<void> {
   const {
@@ -82,7 +84,8 @@ async function buildDraft(
     videoPath,
     videoCoverPath,
     articleImagePaths,
-    articleCoverPath
+    articleCoverPath,
+    reportProgress
   } = input;
   const videoTitle = toVideoPublishTitle(title);
 
@@ -94,9 +97,12 @@ async function buildDraft(
   await page.insertArticleImages(articleImagePaths);
   await page.moveEditorCursorToStart();
   await page.uploadVideo(videoPath);
+  await reportProgress?.("视频上传已开始，继续设置视频标题和封面");
   await page.fillVideoTitle(videoTitle);
   await page.setVideoCover(videoCoverPath);
+  await reportProgress?.("视频标题和封面已设置，正在等待上传完成");
   await page.ensureVideoReady();
+  await reportProgress?.("视频已插入正文，继续处理文章封面和声明");
   await page.removeEmptyContentBlocks?.();
   await page.setArticleCover(articleCoverPath);
   await page.applyDeclaration();
@@ -148,7 +154,8 @@ export async function publishArticle(
     articleImagePaths,
     articleCoverPath,
     mode,
-    evidenceDir
+    evidenceDir,
+    reportProgress
   } = input;
 
   let lastIssues: string[] = [];
@@ -162,7 +169,8 @@ export async function publishArticle(
       videoPath,
       videoCoverPath,
       articleImagePaths,
-      articleCoverPath
+      articleCoverPath,
+      reportProgress
     });
 
     const state = await page.readPrePublishState();

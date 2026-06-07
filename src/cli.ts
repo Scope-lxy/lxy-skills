@@ -38,6 +38,12 @@ export interface BrowserLike {
   close(): Promise<void>;
 }
 
+interface PublishProgressUpdate {
+  profileId: number;
+  title: string;
+  message: string;
+}
+
 interface PlaywrightLocatorLike {
   click(): Promise<void>;
   count(): Promise<number>;
@@ -300,6 +306,9 @@ export interface RunCommandDependencies {
   connectBrowser: (endpoint: string) => Promise<BrowserLike>;
   publishArticle: PublishArticleDependency;
   writeRunEvent: typeof writeRunEvent;
+  reportProgress: (
+    update: PublishProgressUpdate
+  ) => Promise<void> | void;
 }
 
 export interface RunCommandReport {
@@ -1129,6 +1138,30 @@ async function waitForDialogTextToClear(
   throw new Error(`${description}未结束`);
 }
 
+function buildVideoUploadPendingErrorDetails(
+  videoTitleValue: string | null,
+  dialogText: string | null
+): string {
+  const details: string[] = [];
+
+  if (videoTitleValue !== null) {
+    details.push(
+      videoTitleValue.trim().length > 0
+        ? `视频标题="${videoTitleValue}"`
+        : "视频标题为空"
+    );
+  }
+
+  if (typeof dialogText === "string" && dialogText.trim().length > 0) {
+    const compactText = dialogText.replace(/\s+/gu, " ").trim();
+    details.push(`弹窗文本=${compactText.slice(0, 120)}`);
+  }
+
+  return details.length > 0
+    ? `视频上传流程未结束（${details.join("；")}）`
+    : "视频上传流程未结束";
+}
+
 function createPlaywrightPageAdapter(page: PlaywrightPageLike): PenguinPublishPageLike {
   let baselineEditorVideoCount = 0;
   let baselineEditorVideoCoverCount = 0;
@@ -1334,13 +1367,6 @@ function createPlaywrightPageAdapter(page: PlaywrightPageLike): PenguinPublishPa
     },
     async fillVideoTitle(title) {
       await bringPageToFront(page);
-      await waitForDialogTextToClear(
-        page,
-        OPEN_DIALOG_BODY_SELECTORS,
-        VIDEO_UPLOAD_PENDING_TEXTS,
-        "视频上传流程",
-        VIDEO_UPLOAD_WAIT_ATTEMPTS
-      );
       const locator = await pickVisibleLocator(
         page,
         VIDEO_MODAL_TITLE_SELECTORS,
@@ -1374,6 +1400,9 @@ function createPlaywrightPageAdapter(page: PlaywrightPageLike): PenguinPublishPa
         videoCoverPath,
         "可用视频封面上传控件"
       );
+    },
+    async ensureVideoReady() {
+      await bringPageToFront(page);
       await waitForDialogTextToClear(
         page,
         OPEN_DIALOG_BODY_SELECTORS,
@@ -1381,49 +1410,31 @@ function createPlaywrightPageAdapter(page: PlaywrightPageLike): PenguinPublishPa
         "视频上传流程",
         VIDEO_UPLOAD_WAIT_ATTEMPTS
       );
-      if (await clickVideoConfirmUntilDialogCloses(page)) {
-        return;
-      }
 
-      try {
-        await waitForSelectorsToDisappear(
-          page,
-          OPEN_DIALOG_SELECTORS,
-          "视频上传弹窗",
-          60
-        );
-      } catch {
-        const videoTitleValue = await readFirstInputValueIfPossible(
-          page,
-          VIDEO_MODAL_TITLE_SELECTORS
-        );
-        const dialogText = await readFirstTextContentIfPossible(
-          page,
-          OPEN_DIALOG_BODY_SELECTORS
-        );
-        const details: string[] = [];
+      if (!(await clickVideoConfirmUntilDialogCloses(page))) {
+        try {
+          await waitForSelectorsToDisappear(
+            page,
+            OPEN_DIALOG_SELECTORS,
+            "视频上传流程",
+            60
+          );
+        } catch {
+          const videoTitleValue = await readFirstInputValueIfPossible(
+            page,
+            VIDEO_MODAL_TITLE_SELECTORS
+          );
+          const dialogText = await readFirstTextContentIfPossible(
+            page,
+            OPEN_DIALOG_BODY_SELECTORS
+          );
 
-        if (videoTitleValue !== null) {
-          details.push(
-            videoTitleValue.trim().length > 0
-              ? `视频标题="${videoTitleValue}"`
-              : "视频标题为空"
+          throw new Error(
+            buildVideoUploadPendingErrorDetails(videoTitleValue, dialogText)
           );
         }
-
-        if (typeof dialogText === "string" && dialogText.trim().length > 0) {
-          const compactText = dialogText.replace(/\s+/gu, " ").trim();
-          details.push(`弹窗文本=${compactText.slice(0, 120)}`);
-        }
-
-        throw new Error(
-          details.length > 0
-            ? `视频上传弹窗未结束（${details.join("；")}）`
-            : "视频上传弹窗未结束"
-        );
       }
-    },
-    async ensureVideoReady() {
+
       for (let attempt = 0; attempt < 40; attempt += 1) {
         const currentVideoCount = await page
           .locator('.ProseMirror div.video[data-widget="video"]')
@@ -1669,7 +1680,8 @@ const defaultDependencies: RunCommandDependencies = {
   openProfile,
   connectBrowser: defaultConnectBrowser,
   publishArticle: runPublishArticle,
-  writeRunEvent
+  writeRunEvent,
+  reportProgress: async () => undefined
 };
 
 export async function runCommandReport(
@@ -1744,7 +1756,14 @@ export async function runCommandReport(
         ],
         articleCoverPath: articleAssets.articleCoverPath,
         mode: config.mode,
-        evidenceDir: join(config.assetsRoot, "logs")
+        evidenceDir: join(config.assetsRoot, "logs"),
+        reportProgress: async (message) => {
+          await deps.reportProgress({
+            profileId: allocation.profileId,
+            title: allocation.title,
+            message
+          });
+        }
       });
 
       result = {
@@ -1846,7 +1865,11 @@ export async function runCli(argv: readonly string[]): Promise<number> {
       console.log(formatModeHint(config.mode));
     }
 
-    const report = await runCommandReport(command);
+    const report = await runCommandReport(command, {
+      reportProgress: async ({ profileId, title, message }) => {
+        console.log(`${profileId}窗口：${title} ${message}`);
+      }
+    });
 
     for (const summary of report.summaries) {
       console.log(summary);
