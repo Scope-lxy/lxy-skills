@@ -244,12 +244,12 @@ describe("publishArticle", () => {
       "resetDraft",
       "fillTitle:测试标题",
       "focusEditorBody",
+      "insertArticleImages:C:/企鹅号发布/pictures/配图1-A版本.jpg,C:/企鹅号发布/pictures/配图2-A版本.jpg",
+      "moveEditorCursorToStart",
       "uploadVideo:C:/企鹅号发布/videos/demo.mp4",
       "fillVideoTitle:测试标题",
       "setVideoCover:C:/企鹅号发布/video-covers/demo.jpg",
       "ensureVideoReady",
-      "focusEditorBody",
-      "insertArticleImages:C:/企鹅号发布/pictures/配图1-A版本.jpg,C:/企鹅号发布/pictures/配图2-A版本.jpg",
       "removeEmptyContentBlocks",
       "setArticleCover:C:/企鹅号发布/covers/封面-A版.jpg",
       "applyDeclaration:剧情演绎，仅供娱乐",
@@ -258,7 +258,7 @@ describe("publishArticle", () => {
     ]);
   });
 
-  it("uploads the video before inserting images so the first image occupies the post-video paragraph", async () => {
+  it("inserts images first and then moves the cursor to the start before uploading the video", async () => {
     const actions: string[] = [];
     const page = createFakePage(actions);
 
@@ -277,20 +277,16 @@ describe("publishArticle", () => {
       evidenceDir: "C:/企鹅号发布/logs"
     });
 
-    expect(actions.indexOf("uploadVideo:C:/企鹅号发布/videos/demo.mp4")).toBeLessThan(
+    expect(
       actions.indexOf(
         "insertArticleImages:C:/企鹅号发布/pictures/配图1-A版本.jpg,C:/企鹅号发布/pictures/配图2-A版本.jpg"
       )
-    );
-    expect(actions.indexOf("ensureVideoReady")).toBeLessThan(
-      actions.indexOf(
-        "insertArticleImages:C:/企鹅号发布/pictures/配图1-A版本.jpg,C:/企鹅号发布/pictures/配图2-A版本.jpg"
-      )
+    ).toBeLessThan(actions.indexOf("moveEditorCursorToStart"));
+    expect(actions.indexOf("moveEditorCursorToStart")).toBeLessThan(
+      actions.indexOf("uploadVideo:C:/企鹅号发布/videos/demo.mp4")
     );
     expect(actions.indexOf("removeEmptyContentBlocks")).toBeGreaterThan(
-      actions.indexOf(
-        "insertArticleImages:C:/企鹅号发布/pictures/配图1-A版本.jpg,C:/企鹅号发布/pictures/配图2-A版本.jpg"
-      )
+      actions.indexOf("ensureVideoReady")
     );
   });
 
@@ -324,12 +320,12 @@ describe("publishArticle", () => {
       "resetDraft",
       "fillTitle:测试标题",
       "focusEditorBody",
+      "insertArticleImages:C:/企鹅号发布/pictures/配图1-A版本.jpg,C:/企鹅号发布/pictures/配图2-A版本.jpg",
+      "moveEditorCursorToStart",
       "uploadVideo:C:/企鹅号发布/videos/demo.mp4",
       "fillVideoTitle:测试标题",
       "setVideoCover:C:/企鹅号发布/video-covers/demo.jpg",
       "ensureVideoReady",
-      "focusEditorBody",
-      "insertArticleImages:C:/企鹅号发布/pictures/配图1-A版本.jpg,C:/企鹅号发布/pictures/配图2-A版本.jpg",
       "removeEmptyContentBlocks",
       "setArticleCover:C:/企鹅号发布/covers/封面-A版.jpg",
       "applyDeclaration:剧情演绎，仅供娱乐",
@@ -436,12 +432,12 @@ describe("publishArticle", () => {
       "resetDraft",
       "fillTitle:测试标题",
       "focusEditorBody",
+      "insertArticleImages:C:/企鹅号发布/pictures/配图1-A版本.jpg,C:/企鹅号发布/pictures/配图2-A版本.jpg",
+      "moveEditorCursorToStart",
       "uploadVideo:C:/企鹅号发布/videos/demo.mp4",
       "fillVideoTitle:测试标题",
       "setVideoCover:C:/企鹅号发布/video-covers/demo.jpg",
       "ensureVideoReady",
-      "focusEditorBody",
-      "insertArticleImages:C:/企鹅号发布/pictures/配图1-A版本.jpg,C:/企鹅号发布/pictures/配图2-A版本.jpg",
       "removeEmptyContentBlocks",
       "setArticleCover:C:/企鹅号发布/covers/封面-A版.jpg",
       "applyDeclaration:剧情演绎，仅供娱乐",
@@ -453,12 +449,12 @@ describe("publishArticle", () => {
       "resetDraft",
       "fillTitle:测试标题",
       "focusEditorBody",
+      "insertArticleImages:C:/企鹅号发布/pictures/配图1-A版本.jpg,C:/企鹅号发布/pictures/配图2-A版本.jpg",
+      "moveEditorCursorToStart",
       "uploadVideo:C:/企鹅号发布/videos/demo.mp4",
       "fillVideoTitle:测试标题",
       "setVideoCover:C:/企鹅号发布/video-covers/demo.jpg",
       "ensureVideoReady",
-      "focusEditorBody",
-      "insertArticleImages:C:/企鹅号发布/pictures/配图1-A版本.jpg,C:/企鹅号发布/pictures/配图2-A版本.jpg",
       "removeEmptyContentBlocks",
       "setArticleCover:C:/企鹅号发布/covers/封面-A版.jpg",
       "applyDeclaration:剧情演绎，仅供娱乐",
@@ -495,12 +491,12 @@ describe("publishArticle", () => {
       "resetDraft",
       "fillTitle:测试标题",
       "focusEditorBody",
+      "insertArticleImages:C:/企鹅号发布/pictures/配图1-A版本.jpg,C:/企鹅号发布/pictures/配图2-A版本.jpg",
+      "moveEditorCursorToStart",
       "uploadVideo:C:/企鹅号发布/videos/demo.mp4",
       "fillVideoTitle:测试标题",
       "setVideoCover:C:/企鹅号发布/video-covers/demo.jpg",
       "ensureVideoReady",
-      "focusEditorBody",
-      "insertArticleImages:C:/企鹅号发布/pictures/配图1-A版本.jpg,C:/企鹅号发布/pictures/配图2-A版本.jpg",
       "removeEmptyContentBlocks",
       "setArticleCover:C:/企鹅号发布/covers/封面-A版.jpg",
       "applyDeclaration:剧情演绎，仅供娱乐",
@@ -542,6 +538,8 @@ describe("publishArticle", () => {
       "resetDraft",
       "fillTitle:测试标题",
       "focusEditorBody",
+      "insertArticleImages:C:/企鹅号发布/pictures/配图1-A版本.jpg,C:/企鹅号发布/pictures/配图2-A版本.jpg",
+      "moveEditorCursorToStart",
       "uploadVideo:C:/企鹅号发布/videos/demo.mp4",
       "fillVideoTitle:测试标题",
       "setVideoCover:C:/企鹅号发布/video-covers/demo.jpg",

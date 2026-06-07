@@ -90,12 +90,12 @@ async function buildDraft(
   await page.resetDraft();
   await page.fillTitle(title);
   await page.focusEditorBody();
+  await page.insertArticleImages(articleImagePaths);
+  await page.moveEditorCursorToStart();
   await page.uploadVideo(videoPath);
   await page.fillVideoTitle(videoTitle);
   await page.setVideoCover(videoCoverPath);
   await page.ensureVideoReady();
-  await page.focusEditorBody();
-  await page.insertArticleImages(articleImagePaths);
   await page.removeEmptyContentBlocks?.();
   await page.setArticleCover(articleCoverPath);
   await page.applyDeclaration();

@@ -656,8 +656,8 @@ describe("runCommand", () => {
     const videoTriggerIndex = actions.indexOf(
       "click:button.exeditor-menu-basic-video:0"
     );
-    expect(videoTriggerIndex).toBeLessThan(insertImageTriggerIndex);
-    expect(actions).not.toContain("keyboard:ArrowLeft");
+    expect(insertImageTriggerIndex).toBeLessThan(videoTriggerIndex);
+    expect(actions).toContain("keyboard:ArrowLeft");
     expect(actions).toContain(
       "setInputFiles:input[name=\"Filedata\"][type=\"file\"]:0:C:/企鹅号发布/videos/happy.mp4"
     );
@@ -772,7 +772,7 @@ describe("runCommand", () => {
     expect(actions.filter((action) => action === "bringToFront").length).toBeGreaterThanOrEqual(2);
   });
 
-  it("fails early when the video insert button is unavailable before inserting article images", async () => {
+  it("fails before uploading video when the cursor cannot move to the start after inserting images", async () => {
     const fakePage = createPlaywrightLikePage(
       {
         'span.omui-inputautogrowing__inner[contenteditable="true"][data-placeholder*="标题"]': { count: 1 },
@@ -811,10 +811,11 @@ describe("runCommand", () => {
       writeRunEvent
     });
 
-    expect(summary[0]).toContain("未找到视频插入按钮");
-    expect(fakePage.actions).not.toContain(
+    expect(summary[0]).toContain("正文光标未移动到最前");
+    expect(fakePage.actions).toContain(
       'click:exeditor-toolbar-button[data-toolbar-item-of="imagePlugin"]:0'
     );
+    expect(fakePage.actions).not.toContain("click:button.exeditor-menu-basic-video:0");
     expect(writeRunEvent).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
