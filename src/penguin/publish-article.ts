@@ -97,10 +97,14 @@ async function buildDraft(
   await page.insertArticleImages(articleImagePaths);
   await page.moveEditorCursorToStart();
   await page.uploadVideo(videoPath);
-  await reportProgress?.("视频上传已开始，继续设置视频标题和封面");
+  await reportProgress?.(
+    "视频上传已开始，通常需要1-30分钟；继续设置视频标题和封面，等待期间不要结束任务"
+  );
   await page.fillVideoTitle(videoTitle);
   await page.setVideoCover(videoCoverPath);
-  await reportProgress?.("视频标题和封面已设置，正在等待上传完成");
+  await reportProgress?.(
+    "视频标题和封面已设置，正在等待上传完成；等待期间不要结束任务"
+  );
   await page.ensureVideoReady();
   await reportProgress?.("视频已插入正文，继续处理文章封面和声明");
   await page.removeEmptyContentBlocks?.();

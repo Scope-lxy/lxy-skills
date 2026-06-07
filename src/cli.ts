@@ -44,6 +44,8 @@ interface PublishProgressUpdate {
   message: string;
 }
 
+type ProgressReporter = (message: string) => Promise<void> | void;
+
 interface PlaywrightLocatorLike {
   click(): Promise<void>;
   count(): Promise<number>;
@@ -147,6 +149,10 @@ const VIDEO_COVER_CONFIRM_SELECTORS = [
 
 const VIDEO_UPLOAD_PENDING_TEXTS = ["上传中", "取消上传"] as const;
 const VIDEO_CONFIRM_RETRY_DELAY_MS = 2000;
+const UI_TICK_MS = 500;
+const VIDEO_UPLOAD_HEARTBEAT_INTERVAL_MS = 30000;
+const VIDEO_UPLOAD_HEARTBEAT_MESSAGE =
+  "视频上传流程仍在进行，可能持续1-30分钟；继续等待，不要结束任务";
 
 const OPEN_DIALOG_SELECTORS = ['.omui-dialog-wrapper.open'] as const;
 const DIALOG_CLOSE_SELECTORS = [
@@ -398,7 +404,7 @@ async function pickVisibleLocator(
 
 async function waitForUiTick(page: PlaywrightPageLike): Promise<void> {
   if (typeof page.waitForTimeout === "function") {
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(UI_TICK_MS);
   }
 }
 
@@ -1103,9 +1109,19 @@ async function waitForDialogTextToClear(
   pendingTexts: readonly string[],
   description: string,
   maxAttempts = 120,
-  minWarmupAttempts = 6
+  minWarmupAttempts = 6,
+  options: {
+    reportProgress?: ProgressReporter;
+    heartbeatIntervalMs?: number;
+    heartbeatMessage?: string;
+  } = {}
 ): Promise<void> {
   let sawPendingText = false;
+  let waitedPendingMs = 0;
+  let lastHeartbeatAtMs = 0;
+
+  const heartbeatIntervalMs =
+    options.heartbeatIntervalMs ?? VIDEO_UPLOAD_HEARTBEAT_INTERVAL_MS;
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const dialogText = await readFirstTextContentIfPossible(page, dialogSelectors);
@@ -1124,6 +1140,18 @@ async function waitForDialogTextToClear(
 
     if (hasPendingText) {
       sawPendingText = true;
+      waitedPendingMs += UI_TICK_MS;
+
+      if (
+        options.reportProgress &&
+        typeof options.heartbeatMessage === "string" &&
+        options.heartbeatMessage.length > 0 &&
+        waitedPendingMs - lastHeartbeatAtMs >= heartbeatIntervalMs
+      ) {
+        await options.reportProgress(options.heartbeatMessage);
+        lastHeartbeatAtMs = waitedPendingMs;
+      }
+
       await waitForUiTick(page);
       continue;
     }
@@ -1162,7 +1190,10 @@ function buildVideoUploadPendingErrorDetails(
     : "视频上传流程未结束";
 }
 
-function createPlaywrightPageAdapter(page: PlaywrightPageLike): PenguinPublishPageLike {
+function createPlaywrightPageAdapter(
+  page: PlaywrightPageLike,
+  reportProgress?: ProgressReporter
+): PenguinPublishPageLike {
   let baselineEditorVideoCount = 0;
   let baselineEditorVideoCoverCount = 0;
 
@@ -1408,7 +1439,13 @@ function createPlaywrightPageAdapter(page: PlaywrightPageLike): PenguinPublishPa
         OPEN_DIALOG_BODY_SELECTORS,
         VIDEO_UPLOAD_PENDING_TEXTS,
         "视频上传流程",
-        VIDEO_UPLOAD_WAIT_ATTEMPTS
+        VIDEO_UPLOAD_WAIT_ATTEMPTS,
+        6,
+        {
+          reportProgress,
+          heartbeatIntervalMs: VIDEO_UPLOAD_HEARTBEAT_INTERVAL_MS,
+          heartbeatMessage: VIDEO_UPLOAD_HEARTBEAT_MESSAGE
+        }
       );
 
       if (!(await clickVideoConfirmUntilDialogCloses(page))) {
@@ -1624,13 +1661,16 @@ function createPlaywrightPageAdapter(page: PlaywrightPageLike): PenguinPublishPa
   };
 }
 
-function normalizePublishPage(page: unknown): PenguinPublishPageLike {
+function normalizePublishPage(
+  page: unknown,
+  reportProgress?: ProgressReporter
+): PenguinPublishPageLike {
   if (isPenguinPublishPageLike(page)) {
     return page;
   }
 
   if (isPlaywrightPageLike(page)) {
-    return createPlaywrightPageAdapter(page);
+    return createPlaywrightPageAdapter(page, reportProgress);
   }
 
   throw new Error("浏览器页面对象不支持企鹅号发布流程");
@@ -1641,7 +1681,7 @@ async function runPublishArticle(
 ): Promise<PublishArticleResult> {
   return publishArticle({
     ...input,
-    page: normalizePublishPage(input.page)
+    page: normalizePublishPage(input.page, input.reportProgress)
   });
 }
 
