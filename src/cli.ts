@@ -151,6 +151,7 @@ const VIDEO_COVER_CONFIRM_SELECTORS = [
 const VIDEO_UPLOAD_PENDING_TEXTS = ["上传中", "取消上传"] as const;
 const VIDEO_CONFIRM_RETRY_DELAY_MS = 2000;
 const UI_TICK_MS = 500;
+const DRAFT_RESTORE_WAIT_MS = 10000;
 const VIDEO_UPLOAD_HEARTBEAT_INTERVAL_MS = 60000;
 const VIDEO_UPLOAD_HEARTBEAT_MESSAGE =
   "视频上传流程仍在进行，可能持续1-30分钟；继续等待，不要结束任务";
@@ -414,6 +415,17 @@ async function pickVisibleLocator(
 async function waitForUiTick(page: PlaywrightPageLike): Promise<void> {
   if (typeof page.waitForTimeout === "function") {
     await page.waitForTimeout(UI_TICK_MS);
+  }
+}
+
+async function waitForDraftRestoreWindow(page: PlaywrightPageLike): Promise<void> {
+  if (typeof page.waitForTimeout === "function") {
+    await page.waitForTimeout(DRAFT_RESTORE_WAIT_MS);
+    return;
+  }
+
+  for (let waitedMs = 0; waitedMs < DRAFT_RESTORE_WAIT_MS; waitedMs += UI_TICK_MS) {
+    await waitForUiTick(page);
   }
 }
 
@@ -1381,6 +1393,8 @@ function createPlaywrightPageAdapter(
     async resetDraft() {
       await bringPageToFront(page);
       await closeUnexpectedDialogs(page);
+      await waitForDraftRestoreWindow(page);
+      await bringPageToFront(page);
 
       const titleLocator = await findVisibleLocatorGroup(page, TITLE_INPUT_SELECTORS);
 
@@ -1436,6 +1450,7 @@ function createPlaywrightPageAdapter(
         "可用标题输入框"
       );
       await locator.fill(title);
+      await waitForUiTick(page);
 
       const currentValue =
         (await readFirstInputValueIfPossible(page, TITLE_INPUT_SELECTORS)) ??
@@ -1566,6 +1581,7 @@ function createPlaywrightPageAdapter(
         videoCoverPath,
         "可用视频封面上传控件"
       );
+      await waitForUiTick(page);
     },
     async ensureVideoReady() {
       await bringPageToFront(page);
@@ -1657,6 +1673,7 @@ function createPlaywrightPageAdapter(
           "文章配图确认按钮"
         );
         await confirmButton.click();
+        await waitForUiTick(page);
         await waitForSelectorsToDisappear(page, OPEN_DIALOG_SELECTORS, "文章配图弹窗");
         await waitForInlineImageCountIncrease(page, index + 1);
       }
@@ -1681,6 +1698,7 @@ function createPlaywrightPageAdapter(
         articleCoverPath,
         "文章封面本地上传控件"
       );
+      await waitForUiTick(page);
       await confirmArticleCoverUntilApplied(page, previousSignature);
     },
     async applyDeclaration() {
@@ -1709,6 +1727,7 @@ function createPlaywrightPageAdapter(
         "自主声明确认按钮"
       );
       await confirmButton.click();
+      await waitForUiTick(page);
     },
     async applyAiDeclaration() {
       await bringPageToFront(page);
@@ -1731,6 +1750,7 @@ function createPlaywrightPageAdapter(
         "AI声明提交按钮"
       );
       await submitButton.click();
+      await waitForUiTick(page);
     },
     async readPrePublishState(): Promise<PenguinPrePublishStateInput> {
       await bringPageToFront(page);
@@ -1780,6 +1800,7 @@ function createPlaywrightPageAdapter(
     async clickPublish() {
       if (page.getByRole) {
         await page.getByRole("button", { name: /发布/u }).click();
+        await waitForUiTick(page);
         return;
       }
 
@@ -1788,6 +1809,7 @@ function createPlaywrightPageAdapter(
         '[role="button"]:has-text("发布")'
       ], "可用发布按钮");
       await locator.click();
+      await waitForUiTick(page);
     }
   };
 }

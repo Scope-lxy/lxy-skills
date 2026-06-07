@@ -1427,6 +1427,12 @@ describe("runCommand", () => {
     });
 
     expect(summary).toEqual(["14窗口：fresh 已完成，停在发布前"]);
+    const restoreWaitIndex = actions.indexOf("waitForTimeout:10000");
+    const forceClearTitleIndex = actions.indexOf("forceClearTitle");
+    const forceClearEditorIndex = actions.indexOf("forceClearEditorDraft");
+    expect(restoreWaitIndex).toBeGreaterThan(actions.indexOf("goto:https://om.qq.com/article/publish:domcontentloaded"));
+    expect(restoreWaitIndex).toBeLessThan(forceClearTitleIndex);
+    expect(restoreWaitIndex).toBeLessThan(forceClearEditorIndex);
     expect(actions).toContain("forceClearTitle");
     expect(actions).toContain("forceClearEditorDraft");
   });
