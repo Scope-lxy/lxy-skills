@@ -1175,7 +1175,7 @@ describe("runCommand", () => {
     expect(actions).toContain("forceClearEditorDraft");
   });
 
-  it("stops before publish when the actual title value differs from the video title", async () => {
+  it("corrects a mismatched actual title value before the final publish check", async () => {
     const fakePage = createPlaywrightLikePage(
       {
         'input[placeholder*="标题"]': { count: 1 },
@@ -1247,7 +1247,10 @@ describe("runCommand", () => {
       writeRunEvent: createWriteRunEventMock()
     });
 
-    expect(summary[0]).toContain("标题与目标不一致");
+    expect(summary).toEqual(["15窗口：正确标题 已完成，停在发布前"]);
+    expect(fakePage.actions).toContain(
+      'fill:input[placeholder*="标题"]:0:正确标题'
+    );
     expect(fakePage.actions).not.toContain("click:role:button:/发布/u:0");
   });
 });

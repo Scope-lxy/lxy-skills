@@ -9,7 +9,7 @@ default_prompt: |
   Return the per-window Chinese summary lines from the CLI output.
   If a line says `已完成，停在发布前`, explicitly explain that this window is stopped at the publish button and is waiting for manual confirmation instead of auto-publishing.
   The current editor-building order is: force-clear the title field and editor body, insert the two article images first, move the editor cursor to the start, upload the video, then clean blank editor blocks. The final content order must still be video -> image 1 -> image 2.
-  Before publishing, the CLI reads the actual page title value and requires it to exactly match the title derived from the current video filename. A title mismatch must stop the run.
+  Before publishing, the CLI reads the actual page title value and requires it to exactly match the title derived from the current video filename. On mismatch, it automatically fills the correct title once and rechecks; if the title is still wrong, it stops the run.
   In production mode, after a window is confirmed as published, the CLI automatically moves the used `.mp4` into `企鹅号发布/used` to avoid reusing it; pause-before-publish and failed windows are not moved.
   If the user sends only `发企鹅号`, `发视频`, `/发企鹅号`, or `/发视频`, do not run anything yet; ask them to reply with a window range using `1` or `1-5`.
   If the user sends a mode-switch command matching `[/]发企鹅号|发视频` + at least one space + `开发模式|正式模式`, run the same local command and return only the mode switch result; do not start publishing in that turn.

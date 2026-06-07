@@ -211,6 +211,86 @@ describe("validatePrePublishState", () => {
       )
     ).toEqual(["正文存在多余空行", "正文内容顺序不正确"]);
   });
+
+  it("corrects a title mismatch once before continuing", async () => {
+    const actions: string[] = [];
+    const page = createFakePage(actions, [
+      {
+        ...createReadyState(),
+        titleText: "错误标题",
+        contentBlockOrder: ["video", "image", "image"]
+      },
+      {
+        ...createReadyState(),
+        titleText: "测试标题",
+        contentBlockOrder: ["video", "image", "image"]
+      }
+    ]);
+
+    await expect(
+      publishArticle({
+        page,
+        publishUrl: "https://om.qq.com/article/publish",
+        title: "测试标题",
+        videoPath: "C:/企鹅号发布/videos/demo.mp4",
+        videoCoverPath: "C:/企鹅号发布/video-covers/demo.jpg",
+        articleImagePaths: [
+          "C:/企鹅号发布/pictures/配图1-A版本.jpg",
+          "C:/企鹅号发布/pictures/配图2-A版本.jpg"
+        ],
+        articleCoverPath: "C:/企鹅号发布/covers/封面-A版.jpg",
+        mode: "pause-before-publish",
+        evidenceDir: "C:/企鹅号发布/logs"
+      })
+    ).resolves.toEqual({
+      status: "ready-to-publish",
+      message: "已完成，停在发布前"
+    });
+
+    expect(actions).toContain("fillTitle:测试标题");
+    expect(actions.filter((action) => action === "fillTitle:测试标题")).toHaveLength(2);
+    expect(actions.filter((action) => action === "readPrePublishState")).toHaveLength(2);
+    expect(actions).not.toContain(
+      "capturePrePublishEvidence:pre-publish-review-failed-attempt-1:C:/企鹅号发布/logs"
+    );
+  });
+
+  it("stops immediately when the title is still wrong after automatic correction", async () => {
+    const actions: string[] = [];
+    const page = createFakePage(actions, [
+      {
+        ...createReadyState(),
+        titleText: "错误标题",
+        contentBlockOrder: ["video", "image", "image"]
+      },
+      {
+        ...createReadyState(),
+        titleText: "还是错误标题",
+        contentBlockOrder: ["video", "image", "image"]
+      }
+    ]);
+
+    await expect(
+      publishArticle({
+        page,
+        publishUrl: "https://om.qq.com/article/publish",
+        title: "测试标题",
+        videoPath: "C:/企鹅号发布/videos/demo.mp4",
+        videoCoverPath: "C:/企鹅号发布/video-covers/demo.jpg",
+        articleImagePaths: [
+          "C:/企鹅号发布/pictures/配图1-A版本.jpg",
+          "C:/企鹅号发布/pictures/配图2-A版本.jpg"
+        ],
+        articleCoverPath: "C:/企鹅号发布/covers/封面-A版.jpg",
+        mode: "pause-before-publish",
+        evidenceDir: "C:/企鹅号发布/logs"
+      })
+    ).rejects.toThrow("标题与目标不一致");
+
+    expect(actions.filter((action) => action === "fillTitle:测试标题")).toHaveLength(2);
+    expect(actions.filter((action) => action === "readPrePublishState")).toHaveLength(2);
+    expect(actions).not.toContain("clickPublish");
+  });
 });
 
 describe("publishArticle", () => {

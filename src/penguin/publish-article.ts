@@ -52,6 +52,7 @@ export interface PublishArticleResult {
 
 const MAX_VIDEO_TITLE_LENGTH = 32;
 const MAX_REBUILD_ATTEMPTS = 2;
+const TITLE_MISMATCH_ISSUE = "标题与目标不一致";
 
 function assertNever(value: never): never {
   throw new Error(`不支持的发布模式: "${String(value)}"`);
@@ -102,6 +103,39 @@ async function buildDraft(
   await page.applyAiDeclaration();
 }
 
+async function finishPublish(
+  page: PenguinPublishPageLike,
+  mode: PublishMode
+): Promise<PublishArticleResult> {
+  switch (mode) {
+    case "pause-before-publish":
+      return {
+        status: "ready-to-publish",
+        message: "已完成，停在发布前"
+      };
+    case "auto-publish":
+      await page.clickPublish();
+
+      return {
+        status: "published",
+        message: "已自动发布"
+      };
+    default:
+      return assertNever(mode);
+  }
+}
+
+async function correctTitleAndRecheck(
+  page: PenguinPublishPageLike,
+  expectedTitle: string
+): Promise<string[]> {
+  await page.fillTitle(expectedTitle);
+  const correctedState = await page.readPrePublishState();
+  return validatePrePublishReviewState(correctedState, {
+    expectedTitle
+  });
+}
+
 export async function publishArticle(
   input: PublishArticleInput
 ): Promise<PublishArticleResult> {
@@ -119,6 +153,7 @@ export async function publishArticle(
 
   let lastIssues: string[] = [];
   let lastEvidencePath: string | null = null;
+  let stoppedAfterTitleCorrection = false;
 
   for (let attempt = 0; attempt < MAX_REBUILD_ATTEMPTS; attempt += 1) {
     await buildDraft(page, {
@@ -136,25 +171,26 @@ export async function publishArticle(
     });
 
     if (issues.length === 0) {
-      switch (mode) {
-        case "pause-before-publish":
-          return {
-            status: "ready-to-publish",
-            message: "已完成，停在发布前"
-          };
-        case "auto-publish":
-          await page.clickPublish();
-
-          return {
-            status: "published",
-            message: "已自动发布"
-          };
-        default:
-          return assertNever(mode);
-      }
+      return finishPublish(page, mode);
     }
 
-    lastIssues = issues;
+    if (issues.includes(TITLE_MISMATCH_ISSUE)) {
+      const correctedIssues = await correctTitleAndRecheck(page, title);
+
+      if (!correctedIssues.includes(TITLE_MISMATCH_ISSUE)) {
+        if (correctedIssues.length === 0) {
+          return finishPublish(page, mode);
+        }
+
+        lastIssues = correctedIssues;
+      } else {
+        lastIssues = correctedIssues;
+        stoppedAfterTitleCorrection = true;
+        break;
+      }
+    } else {
+      lastIssues = issues;
+    }
 
     if (
       typeof evidenceDir === "string" &&
@@ -169,7 +205,9 @@ export async function publishArticle(
     }
   }
 
-  const detailMessage = [...lastIssues, "已自动重试1次"].join("；");
+  const detailMessage = stoppedAfterTitleCorrection
+    ? lastIssues.join("；")
+    : [...lastIssues, "已自动重试1次"].join("；");
 
   throw new Error(
     lastEvidencePath === null
