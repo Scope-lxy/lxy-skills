@@ -492,6 +492,13 @@ interface EditorStartState extends EditorCaretState {
 
 type ContentBlockKind = "video" | "image" | "empty";
 
+interface DraftResidualState {
+  videos: number;
+  videoCovers: number;
+  images: number;
+  textLength: number;
+}
+
 async function readEditorCaretState(
   page: PlaywrightPageLike
 ): Promise<EditorCaretState | null> {
@@ -717,6 +724,137 @@ async function removeEmptyEditorChildren(
   }
 
   return removedCount;
+}
+
+async function forceClearTitleField(page: PlaywrightPageLike): Promise<boolean> {
+  if (typeof page.evaluate !== "function") {
+    return false;
+  }
+
+  return page.evaluate<boolean, readonly string[]>((selectors) => {
+    const marker = "__ixbrowserForceClearTitle";
+    void marker;
+
+    let cleared = false;
+
+    for (const selector of selectors) {
+      const elements = Array.from(document.querySelectorAll(selector));
+
+      for (const element of elements) {
+        if (
+          element instanceof HTMLInputElement ||
+          element instanceof HTMLTextAreaElement
+        ) {
+          element.value = "";
+          element.dispatchEvent(new InputEvent("input", { bubbles: true }));
+          element.dispatchEvent(new Event("change", { bubbles: true }));
+          cleared = true;
+          continue;
+        }
+
+        if (element instanceof HTMLElement && element.isContentEditable) {
+          element.textContent = "";
+          element.dispatchEvent(new InputEvent("input", { bubbles: true }));
+          element.dispatchEvent(new Event("change", { bubbles: true }));
+          cleared = true;
+        }
+      }
+    }
+
+    return cleared;
+  }, TITLE_INPUT_SELECTORS);
+}
+
+async function forceClearEditorDraft(page: PlaywrightPageLike): Promise<boolean> {
+  if (typeof page.evaluate !== "function") {
+    return false;
+  }
+
+  const cleared = await page.evaluate<boolean, readonly string[]>((selectors) => {
+    const marker = "__ixbrowserForceClearEditorDraft";
+    void marker;
+
+    const editor = selectors
+      .map((selector) => document.querySelector(selector))
+      .find((candidate): candidate is HTMLElement => {
+        return candidate instanceof HTMLElement;
+      });
+
+    if (!(editor instanceof HTMLElement)) {
+      return false;
+    }
+
+    editor.focus();
+    editor.innerHTML = "<p><br></p>";
+    const selection = window.getSelection();
+    const paragraph = editor.querySelector("p");
+
+    if (selection !== null && paragraph instanceof HTMLElement) {
+      const range = document.createRange();
+      range.setStart(paragraph, 0);
+      range.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+
+    editor.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    editor.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  }, EDITOR_BODY_SELECTORS);
+
+  if (cleared) {
+    await waitForUiTick(page);
+  }
+
+  return cleared;
+}
+
+async function readDraftResidualState(
+  page: PlaywrightPageLike
+): Promise<DraftResidualState> {
+  const videos = await page
+    .locator('.ProseMirror div.video[data-widget="video"]')
+    .count();
+  const videoCovers = await page
+    .locator('.ProseMirror div.video[data-widget="video"] video[poster]')
+    .count();
+  const images = await page
+    .locator('.ProseMirror .index_module_content__cffb2914')
+    .count();
+  const textLength = (
+    (await readFirstTextContentIfPossible(page, EDITOR_BODY_SELECTORS)) ?? ""
+  )
+    .replace(/\s+/gu, "")
+    .trim().length;
+
+  return {
+    videos,
+    videoCovers,
+    images,
+    textLength
+  };
+}
+
+function formatDraftResidualError(state: DraftResidualState): string {
+  const details: string[] = [];
+
+  if (state.videos > 0) {
+    details.push(`残留视频=${state.videos}`);
+  }
+
+  if (state.images > 0) {
+    details.push(`残留配图=${state.images}`);
+  }
+
+  if (state.textLength > 0) {
+    details.push(`残留文字长度=${state.textLength}`);
+  }
+
+  if (details.length === 0) {
+    return "旧草稿未清空，已停止本次发布";
+  }
+
+  return `旧草稿未清空，已停止本次发布（${details.join("；")}）`;
 }
 
 async function getVisibleSignalCount(
@@ -974,6 +1112,7 @@ function createPlaywrightPageAdapter(page: PlaywrightPageLike): PenguinPublishPa
       }
     },
     async resetDraft() {
+      await bringPageToFront(page);
       await closeUnexpectedDialogs(page);
 
       const titleLocator = await findVisibleLocatorGroup(page, TITLE_INPUT_SELECTORS);
@@ -982,12 +1121,24 @@ function createPlaywrightPageAdapter(page: PlaywrightPageLike): PenguinPublishPa
         await titleLocator.locator.nth(0).fill("");
       }
 
+      await forceClearTitleField(page);
+
       if (!page.keyboard) {
+        await forceClearEditorDraft(page);
         return;
       }
 
       const editor = await pickVisibleLocator(page, EDITOR_BODY_SELECTORS, "正文编辑区");
+      await bringPageToFront(page);
       await editor.click();
+
+      try {
+        await page.keyboard.press("Control+A");
+        await page.keyboard.press("Backspace");
+        await page.keyboard.press("Delete");
+      } catch {
+        // ignore
+      }
 
       try {
         await page.keyboard.press("Control+End");
@@ -1001,32 +1152,22 @@ function createPlaywrightPageAdapter(page: PlaywrightPageLike): PenguinPublishPa
         // ignore
       }
 
+      await forceClearEditorDraft(page);
+
       for (let attempt = 0; attempt < DRAFT_CLEAR_MAX_BACKSPACES; attempt += 1) {
-        const remainingVideos = await page
-          .locator('.ProseMirror div.video[data-widget="video"]')
-          .count();
-        const remainingVideoCovers = await page
-          .locator('.ProseMirror div.video[data-widget="video"] video[poster]')
-          .count();
-        const remainingImages = await page
-          .locator('.ProseMirror .index_module_content__cffb2914')
-          .count();
-        const editorText = (
-          (await readFirstTextContentIfPossible(page, EDITOR_BODY_SELECTORS)) ?? ""
-        )
-          .replace(/\s+/gu, "")
-          .trim();
+        const residualState = await readDraftResidualState(page);
 
         if (
-          remainingVideos === 0 &&
-          remainingImages === 0 &&
-          editorText.length === 0
+          residualState.videos === 0 &&
+          residualState.images === 0 &&
+          residualState.textLength === 0
         ) {
-          baselineEditorVideoCount = remainingVideos;
-          baselineEditorVideoCoverCount = remainingVideoCovers;
+          baselineEditorVideoCount = residualState.videos;
+          baselineEditorVideoCoverCount = residualState.videoCovers;
           return;
         }
 
+        await bringPageToFront(page);
         await page.keyboard.press("Backspace");
 
         if ((attempt + 1) % DRAFT_CLEAR_CHECK_INTERVAL === 0) {
@@ -1034,33 +1175,33 @@ function createPlaywrightPageAdapter(page: PlaywrightPageLike): PenguinPublishPa
         }
       }
 
-      const remainingVideos = await page
-        .locator('.ProseMirror div.video[data-widget="video"]')
-        .count();
-      const remainingImages = await page
-        .locator('.ProseMirror .index_module_content__cffb2914')
-        .count();
-      const editorText = (
-        (await readFirstTextContentIfPossible(page, EDITOR_BODY_SELECTORS)) ?? ""
-      )
-        .replace(/\s+/gu, "")
-        .trim();
+      const residualState = await readDraftResidualState(page);
 
       if (
-        remainingVideos > 0 ||
-        remainingImages > 0 ||
-        editorText.length > 0
+        residualState.videos > 0 ||
+        residualState.images > 0 ||
+        residualState.textLength > 0
       ) {
-        throw new Error("旧草稿未清空，已停止本次发布");
+        throw new Error(formatDraftResidualError(residualState));
       }
     },
     async fillTitle(title) {
+      await bringPageToFront(page);
+      await forceClearTitleField(page);
       const locator = await pickVisibleLocator(
         page,
         TITLE_INPUT_SELECTORS,
         "可用标题输入框"
       );
       await locator.fill(title);
+
+      const currentValue =
+        (await readFirstInputValueIfPossible(page, TITLE_INPUT_SELECTORS)) ??
+        (await readFirstTextContentIfPossible(page, TITLE_INPUT_SELECTORS));
+
+      if (currentValue !== null && currentValue.trim() !== title.trim()) {
+        throw new Error("标题未填入目标内容");
+      }
     },
     async focusEditorBody() {
       const locator = await pickVisibleLocator(page, EDITOR_BODY_SELECTORS, "正文编辑区");
@@ -1133,6 +1274,7 @@ function createPlaywrightPageAdapter(page: PlaywrightPageLike): PenguinPublishPa
       throw new Error("正文光标未移动到最前，已自动重试恢复失败");
     },
     async uploadVideo(videoPath) {
+      await bringPageToFront(page);
       const trigger = await pickVisibleLocator(
         page,
         VIDEO_TRIGGER_SELECTORS,
@@ -1148,6 +1290,7 @@ function createPlaywrightPageAdapter(page: PlaywrightPageLike): PenguinPublishPa
       );
     },
     async fillVideoTitle(title) {
+      await bringPageToFront(page);
       await waitForDialogTextToClear(
         page,
         OPEN_DIALOG_BODY_SELECTORS,
@@ -1172,6 +1315,7 @@ function createPlaywrightPageAdapter(page: PlaywrightPageLike): PenguinPublishPa
       }
     },
     async setVideoCover(videoCoverPath) {
+      await bringPageToFront(page);
       const trigger = await findVisibleLocatorGroup(
         page,
         VIDEO_COVER_TRIGGER_SELECTORS
@@ -1283,6 +1427,7 @@ function createPlaywrightPageAdapter(page: PlaywrightPageLike): PenguinPublishPa
     },
     async insertArticleImages(articleImagePaths) {
       for (const [index, articleImagePath] of articleImagePaths.entries()) {
+        await bringPageToFront(page);
         const trigger = await pickVisibleLocator(
           page,
           INLINE_IMAGE_TRIGGER_SELECTORS,
@@ -1307,9 +1452,11 @@ function createPlaywrightPageAdapter(page: PlaywrightPageLike): PenguinPublishPa
       }
     },
     async removeEmptyContentBlocks() {
+      await bringPageToFront(page);
       await removeEmptyEditorChildren(page);
     },
     async setArticleCover(articleCoverPath) {
+      await bringPageToFront(page);
       const trigger = await pickVisibleLocator(
         page,
         ARTICLE_COVER_TRIGGER_SELECTORS,
@@ -1331,6 +1478,7 @@ function createPlaywrightPageAdapter(page: PlaywrightPageLike): PenguinPublishPa
       await confirmButton.click();
     },
     async applyDeclaration() {
+      await bringPageToFront(page);
       if (await hasExplicitVisibleSignal(page, DECLARATION_CONFIRMED_SELECTORS)) {
         return;
       }
@@ -1357,6 +1505,7 @@ function createPlaywrightPageAdapter(page: PlaywrightPageLike): PenguinPublishPa
       await confirmButton.click();
     },
     async applyAiDeclaration() {
+      await bringPageToFront(page);
       if (await hasExplicitVisibleSignal(page, AI_DECLARATION_CONFIRMED_SELECTORS)) {
         return;
       }
@@ -1378,10 +1527,10 @@ function createPlaywrightPageAdapter(page: PlaywrightPageLike): PenguinPublishPa
       await submitButton.click();
     },
     async readPrePublishState(): Promise<PenguinPrePublishStateInput> {
-      const titleText = await readFirstTextContentIfPossible(
-        page,
-        TITLE_INPUT_SELECTORS
-      );
+      await bringPageToFront(page);
+      const titleText =
+        (await readFirstInputValueIfPossible(page, TITLE_INPUT_SELECTORS)) ??
+        (await readFirstTextContentIfPossible(page, TITLE_INPUT_SELECTORS));
 
       return {
         hasTitle: await hasExplicitVisibleSignal(page, TITLE_INPUT_SELECTORS),
