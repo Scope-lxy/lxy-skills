@@ -7,8 +7,6 @@ param(
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $sourceDir = $repoRoot
-$legacySkillName = "publish-qq-article"
-$legacySkillName2 = "ixBrowser_video_publish"
 $skillName = "ixBrowser_qq_publish"
 
 if (-not (Test-Path -LiteralPath $sourceDir)) {
@@ -51,16 +49,6 @@ foreach ($target in $targets) {
   }
 
   New-Item -ItemType Directory -Force -Path $targetRoot | Out-Null
-
-  $legacyPath = Join-Path $targetRoot $legacySkillName
-  if ((Test-Path -LiteralPath $legacyPath) -and ($legacyPath -ne $target.Path)) {
-    Remove-Item -LiteralPath $legacyPath -Recurse -Force
-  }
-
-  $legacyPath2 = Join-Path $targetRoot $legacySkillName2
-  if ((Test-Path -LiteralPath $legacyPath2) -and ($legacyPath2 -ne $target.Path)) {
-    Remove-Item -LiteralPath $legacyPath2 -Recurse -Force
-  }
 
   if (Test-Path -LiteralPath $target.Path) {
     Remove-Item -LiteralPath $target.Path -Recurse -Force

@@ -11,10 +11,8 @@
 
 ## 项目边界
 
-- 这是私人定制的 Codex skill，正式名称是 `ixBrowser_qq_publish`。
+- 这是私人定制的通用 skill，正式名称是 `ixBrowser_qq_publish`。
 - GitHub 仓库用于分发 skill；本机私有配置 `config/penguinhao.config.json` 不上传，只保留 `config/penguinhao.config.example.json`。
-- 实际安装目录通常是 `%USERPROFILE%\.agents\skills\ixBrowser_qq_publish`。不要写死 `C:\Users\LXYou\workspace\ixBrowser_skills` 作为运行路径。
-- 旧名 `ixBrowser_video_publish` 不再维护；当前 Codex 会话如果还缓存旧名，直接让用户重新开会话刷新 skill 列表。
 
 ## 当前发布流程
 

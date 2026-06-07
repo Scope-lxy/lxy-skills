@@ -30,12 +30,12 @@ metadata:
 执行规则：
 
 1. 保留用户原始命令字符串，不要改写窗口范围。
-2. 使用安装在 skill 目录里的脚本，不要搜索临时工作区，也不要写死某台电脑的仓库路径。Codex 路径为 `%USERPROFILE%\.agents\skills\ixBrowser_qq_publish`。
-3. 在 skill 目录读取 `config/penguinhao.config.json`，执行发布命令前先向用户提示当前模式：
+2. 使用当前 skill 安装目录内的 `scripts/run-qq-publisher.ps1`。
+3. 在当前 skill 安装目录读取 `config/penguinhao.config.json`，执行发布命令前先向用户提示当前模式：
    - `mode` 为 `pause-before-publish`：`当前是开发模式，半自动发布，会停在发布按钮前等待人工确认。`
    - `mode` 为 `auto-publish`：`当前是正式模式，全自动发布，检查通过后会自动点击发布。`
 4. 运行：
-   `powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.agents\skills\ixBrowser_qq_publish\scripts\run-qq-publisher.ps1" -Command "<用户原命令>"`
+   `powershell -ExecutionPolicy Bypass -File .\scripts\run-qq-publisher.ps1 -Command "<用户原命令>"`
 5. 读取 CLI 输出的逐窗口中文摘要，直接回给用户。
 6. 如果某个窗口失败，也要把失败那一行原样包含在回复里。
 7. 如果输出是“已完成，停在发布前”，明确说明该窗口已经停在发布按钮前等待人工确认，不会自动点击发布。
@@ -67,5 +67,3 @@ metadata:
 `请回复窗口号，例如：1窗口 或 1-5窗口`
 
 运行前默认依赖 `config/penguinhao.config.json`，CLI 会自动读取配置、分配视频、挑封面、打开 ixBrowser profile、连接浏览器、执行发布、移动已发布视频并写日志。
-
-旧名 `ixBrowser_video_publish` 不再维护；如果当前 Codex 会话仍缓存旧名，应让用户重新开会话刷新 skill 列表，不要补旧名兼容目录。

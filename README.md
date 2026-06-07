@@ -1,6 +1,6 @@
 # ixBrowser_qq_publish
 
-这是一个私人定制的 Codex skill，用 ixBrowser 自动串起企鹅号图文发布流程。
+这是一个私人定制的通用 skill，用 ixBrowser 自动串起企鹅号图文发布流程。
 
 ## 当前行为
 
@@ -36,27 +36,27 @@
 
 ## 首次安装
 
-安装到 Codex skill 目录。仓库是私有仓库，换电脑时先确保这台电脑已经能访问 GitHub 私有仓库。
+安装到你的宿主 skill 目录。仓库是私有仓库，换电脑时先确保这台电脑已经能访问 GitHub 私有仓库。
 
 ```powershell
-git clone https://github.com/Scope-lxy/ixBrowser_qq_publish_skill.git "$env:USERPROFILE\.agents\skills\ixBrowser_qq_publish"
-cd "$env:USERPROFILE\.agents\skills\ixBrowser_qq_publish"
+git clone https://github.com/Scope-lxy/ixBrowser_qq_publish_skill.git "<你的skill目录>\ixBrowser_qq_publish"
+cd "<你的skill目录>\ixBrowser_qq_publish"
 npm ci --omit=dev
 powershell -ExecutionPolicy Bypass -File .\scripts\setup-config.ps1
 ```
 
 `setup-config.ps1` 会询问本机素材目录 `assetsRoot`。直接回车会使用 `Documents\企鹅号发布`。
 
-如果已经从开发仓库安装到本机，也可以运行：
+如果已经从开发仓库安装到本机，也可以按宿主选择安装目标：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\install-skill.ps1 -TargetHost codex
+powershell -ExecutionPolicy Bypass -File .\scripts\install-skill.ps1 -TargetHost all
 ```
 
 ## 更新
 
 ```powershell
-cd "$env:USERPROFILE\.agents\skills\ixBrowser_qq_publish"
+cd "<你的skill目录>\ixBrowser_qq_publish"
 powershell -ExecutionPolicy Bypass -File .\scripts\update-skill.ps1
 ```
 
@@ -64,7 +64,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\update-skill.ps1
 
 - `config\penguinhao.config.json` 是本机私有配置，不提交 GitHub。
 - `node_modules` 不提交 GitHub，安装或更新时用 `npm ci --omit=dev` 生成。
-- 如果 Codex 还在找旧 skill 名 `ixBrowser_video_publish`，重新开一个 Codex 会话刷新 skill 列表。
 
 ## 开发验证
 
