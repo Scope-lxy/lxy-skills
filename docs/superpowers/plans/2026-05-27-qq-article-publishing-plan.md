@@ -1,5 +1,7 @@
 # QQ Article Publishing Skill Implementation Plan
 
+> Historical plan: this file records the initial implementation plan. It is not the current source of truth. Use the root `README.md`, `SKILL.md`, and source code for current install, command, and workflow behavior.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a workspace-local Codex skill that turns `/发企鹅号 1-5窗口` into a serial ixBrowser-driven Penguin article publishing workflow that pauses before publish by default and reports per-window results.
