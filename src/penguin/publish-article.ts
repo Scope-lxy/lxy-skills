@@ -19,7 +19,10 @@ export interface PenguinPublishPageLike {
   uploadVideo(videoPath: string): Promise<void>;
   fillVideoTitle(title: string): Promise<void>;
   setVideoCover(videoCoverPath: string): Promise<void>;
-  ensureVideoReady(): Promise<void>;
+  ensureVideoReady(
+    expectedVideoTitle: string,
+    videoCoverPath: string
+  ): Promise<void>;
   insertArticleImages(articleImagePaths: readonly [string, string]): Promise<void>;
   removeEmptyContentBlocks?(): Promise<void>;
   setArticleCover(articleCoverPath: string): Promise<void>;
@@ -105,7 +108,7 @@ async function buildDraft(
   await reportProgress?.(
     "视频标题和封面已设置，正在等待上传完成；等待期间不要结束任务"
   );
-  await page.ensureVideoReady();
+  await page.ensureVideoReady(videoTitle, videoCoverPath);
   await reportProgress?.("视频已插入正文，继续处理文章封面和声明");
   await page.removeEmptyContentBlocks?.();
   await page.setArticleCover(articleCoverPath);

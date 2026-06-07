@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkdir } from "node:fs/promises";
@@ -133,6 +133,11 @@ const VIDEO_COVER_TRIGGER_SELECTORS = [
   'button:has-text("上传封面")',
   'button:has-text("自定义封面")',
   'text=上传封面'
+] as const;
+
+const VIDEO_COVER_LOCAL_TAB_SELECTORS = [
+  '.omui-dialog-wrapper.open li.omui-tab__label:has-text("上传封面")',
+  '.omui-dialog-wrapper.open .omui-tab__label:has-text("上传封面")'
 ] as const;
 
 const VIDEO_COVER_UPLOAD_INPUT_SELECTORS = [
@@ -431,28 +436,87 @@ async function moveEditorSelectionToBoundary(
   await page.keyboard.press(boundary === "end" ? "ArrowDown" : "ArrowUp");
 }
 
-async function clearEditorDraftByKeyboard(page: PlaywrightPageLike): Promise<void> {
-  if (!page.keyboard) {
-    return;
+async function forceEditorCaretToBoundary(
+  page: PlaywrightPageLike,
+  boundary: EditorBoundary
+): Promise<boolean> {
+  if (typeof page.evaluate !== "function") {
+    return false;
   }
 
-  await ensureEditorCaretReady(page);
+  const moved = await page.evaluate<
+    boolean,
+    {
+      selectors: readonly string[];
+      boundary: EditorBoundary;
+    }
+  >((input) => {
+    const marker = "__ixbrowserMoveCaretToBoundary";
+    void marker;
 
-  try {
-    await moveEditorSelectionToBoundary(page, "end");
-    await page.keyboard.press("Delete");
-  } catch {
-    // Keyboard selection is best-effort; DOM clearing is the fallback below.
+    const { selectors, boundary } = input;
+    const editor = selectors
+      .map((selector) => document.querySelector(selector))
+      .find((candidate): candidate is HTMLElement => {
+        return candidate instanceof HTMLElement;
+      });
+
+    if (!(editor instanceof HTMLElement)) {
+      return false;
+    }
+
+    let paragraph = Array.from(editor.querySelectorAll("p")).find(
+      (candidate): candidate is HTMLParagraphElement => {
+        return candidate instanceof HTMLParagraphElement;
+      }
+    );
+
+    if (boundary === "end") {
+      const paragraphs = Array.from(editor.querySelectorAll("p")).filter(
+        (candidate): candidate is HTMLParagraphElement => {
+          return candidate instanceof HTMLParagraphElement;
+        }
+      );
+      paragraph = paragraphs.at(-1) ?? paragraph;
+    }
+
+    if (!(paragraph instanceof HTMLParagraphElement)) {
+      paragraph = document.createElement("p");
+      paragraph.append(document.createElement("br"));
+
+      if (boundary === "start") {
+        editor.prepend(paragraph);
+      } else {
+        editor.append(paragraph);
+      }
+    }
+
+    for (const selectedNode of Array.from(
+      editor.querySelectorAll(".excore-selected-node")
+    )) {
+      selectedNode.classList.remove("excore-selected-node");
+    }
+
+    editor.focus();
+    const selection = window.getSelection();
+
+    if (selection === null) {
+      return false;
+    }
+
+    const range = document.createRange();
+    range.selectNodeContents(paragraph);
+    range.collapse(boundary === "start");
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return true;
+  }, { selectors: EDITOR_BODY_SELECTORS, boundary });
+
+  if (moved) {
+    await waitForUiTick(page);
   }
 
-  try {
-    await moveEditorSelectionToBoundary(page, "start");
-    await page.keyboard.press("Backspace");
-  } catch {
-    // Keyboard selection is best-effort; DOM clearing is the fallback below.
-  }
-
-  await waitForUiTick(page);
+  return moved;
 }
 
 async function ensureEditorCaretReady(page: PlaywrightPageLike): Promise<void> {
@@ -484,6 +548,14 @@ async function ensureEditorCaretReady(page: PlaywrightPageLike): Promise<void> {
 
     if (caretState?.ready ?? true) {
       return;
+    }
+
+    if (await forceEditorCaretToBoundary(page, "end")) {
+      const recoveredState = await readEditorCaretState(page);
+
+      if (recoveredState?.ready ?? false) {
+        return;
+      }
     }
 
     await locator.click();
@@ -869,6 +941,164 @@ async function removeEmptyEditorChildren(
   return removedCount;
 }
 
+async function readVideoCoverSelectedFileNameIfPossible(
+  page: PlaywrightPageLike
+): Promise<string | null> {
+  if (typeof page.evaluate !== "function") {
+    return null;
+  }
+
+  return page.evaluate<string | null, readonly string[]>((selectors) => {
+    const marker = "__ixbrowserReadVideoCoverSelectionName";
+    void marker;
+
+    const input = selectors
+      .map((selector) => document.querySelector(selector))
+      .find((candidate): candidate is HTMLInputElement => {
+        return candidate instanceof HTMLInputElement;
+      });
+
+    if (!(input instanceof HTMLInputElement)) {
+      return null;
+    }
+
+    const selectedFile = input.files?.item(0);
+
+    if (selectedFile?.name) {
+      return selectedFile.name;
+    }
+
+    const rawValue = input.value.trim();
+
+    if (rawValue.length === 0) {
+      return null;
+    }
+
+    const fileName = rawValue.split(/[\\/]/u).pop();
+    return fileName?.length ? fileName : rawValue;
+  }, VIDEO_COVER_UPLOAD_INPUT_SELECTORS);
+}
+
+async function ensureVideoUploadTitle(
+  page: PlaywrightPageLike,
+  expectedTitle: string
+): Promise<void> {
+  const normalizedExpectedTitle = expectedTitle.trim();
+  let lastObservedTitle: string | null = null;
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const currentTitle =
+      (await readFirstInputValueIfPossible(page, VIDEO_MODAL_TITLE_SELECTORS)) ??
+      (await readFirstTextContentIfPossible(page, VIDEO_MODAL_TITLE_SELECTORS));
+    const normalizedCurrentTitle = currentTitle?.trim() ?? null;
+    lastObservedTitle = normalizedCurrentTitle;
+
+    if (
+      normalizedCurrentTitle !== null &&
+      normalizedCurrentTitle === normalizedExpectedTitle
+    ) {
+      return;
+    }
+
+    const titleLocator = await pickVisibleLocator(
+      page,
+      VIDEO_MODAL_TITLE_SELECTORS,
+      "视频标题输入框"
+    );
+    await titleLocator.fill(expectedTitle);
+
+    const verifiedTitle =
+      (await readFirstInputValueIfPossible(page, VIDEO_MODAL_TITLE_SELECTORS)) ??
+      (await readFirstTextContentIfPossible(page, VIDEO_MODAL_TITLE_SELECTORS));
+
+    if (verifiedTitle?.trim() === normalizedExpectedTitle) {
+      return;
+    }
+
+    lastObservedTitle = verifiedTitle?.trim() ?? null;
+    await waitForUiTick(page);
+  }
+
+  const observedTitle =
+    lastObservedTitle !== null && lastObservedTitle.length > 0
+      ? `（当前="${lastObservedTitle}"）`
+      : "";
+
+  throw new Error(`视频标题与目标不一致${observedTitle}`);
+}
+
+async function ensureVideoCoverUploadSelection(
+  page: PlaywrightPageLike,
+  videoCoverPath: string
+): Promise<void> {
+  const expectedFileName = basename(videoCoverPath);
+  let lastObservedFileName: string | null = null;
+  let lastError: unknown = null;
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await clickFirstVisibleIfPresent(page, VIDEO_COVER_LOCAL_TAB_SELECTORS);
+
+    const currentFileName = await readVideoCoverSelectedFileNameIfPossible(page);
+    const normalizedCurrentFileName = currentFileName?.trim() ?? null;
+    lastObservedFileName = normalizedCurrentFileName;
+
+    if (
+      normalizedCurrentFileName !== null &&
+      basename(normalizedCurrentFileName) === expectedFileName
+    ) {
+      return;
+    }
+
+    await clickFirstVisibleIfPresent(page, VIDEO_COVER_LOCAL_TAB_SELECTORS);
+
+    try {
+      await setInputFilesRobustly(
+        page,
+        VIDEO_COVER_UPLOAD_INPUT_SELECTORS,
+        videoCoverPath,
+        "可用视频封面上传控件"
+      );
+    } catch (error) {
+      lastError = error;
+      await waitForUiTick(page);
+      continue;
+    }
+
+    const verifiedFileName = await readVideoCoverSelectedFileNameIfPossible(page);
+    const normalizedVerifiedFileName = verifiedFileName?.trim() ?? null;
+    lastObservedFileName = normalizedVerifiedFileName;
+
+    if (
+      normalizedVerifiedFileName !== null &&
+      basename(normalizedVerifiedFileName) === expectedFileName
+    ) {
+      return;
+    }
+
+    await waitForUiTick(page);
+  }
+
+  const observedFileName =
+    lastObservedFileName !== null && lastObservedFileName.length > 0
+      ? `（当前="${lastObservedFileName}"）`
+      : "";
+
+  if (lastError instanceof Error) {
+    throw new Error(`视频封面与目标不一致${observedFileName}；${lastError.message}`);
+  }
+
+  throw new Error(`视频封面与目标不一致${observedFileName}`);
+}
+
+async function ensureVideoUploadMetadata(
+  page: PlaywrightPageLike,
+  expectedVideoTitle: string,
+  videoCoverPath: string
+): Promise<void> {
+  await ensureVideoUploadTitle(page, expectedVideoTitle);
+  await ensureVideoCoverUploadSelection(page, videoCoverPath);
+}
+
 async function forceClearTitleField(page: PlaywrightPageLike): Promise<boolean> {
   if (typeof page.evaluate !== "function") {
     return false;
@@ -914,7 +1144,7 @@ async function forceClearEditorDraft(page: PlaywrightPageLike): Promise<boolean>
   }
 
   const cleared = await page.evaluate<boolean, readonly string[]>((selectors) => {
-    const marker = "__ixbrowserForceClearEditorDraft";
+    const marker = "__ixbrowserForceClearEditorDraftViaView";
     void marker;
 
     const editor = selectors
@@ -927,19 +1157,57 @@ async function forceClearEditorDraft(page: PlaywrightPageLike): Promise<boolean>
       return false;
     }
 
-    editor.focus();
-    editor.innerHTML = "<p><br></p>";
-    const selection = window.getSelection();
-    const paragraph = editor.querySelector("p");
+    const exEditor = (window as typeof window & {
+      ExEditor?: {
+        view?: {
+          state?: {
+            schema?: {
+              topNodeType?: {
+                createAndFill?(): { content: unknown } | null;
+              };
+            };
+            doc?: {
+              content?: { size: number };
+            };
+            tr?: {
+              replaceWith?(from: number, to: number, slice: unknown): unknown;
+            };
+          };
+          dispatch?: (tr: unknown) => void;
+          focus?: () => void;
+        };
+      };
+    }).ExEditor;
+    const view = exEditor?.view;
 
-    if (selection !== null && paragraph instanceof HTMLElement) {
-      const range = document.createRange();
-      range.setStart(paragraph, 0);
-      range.collapse(true);
-      selection.removeAllRanges();
-      selection.addRange(range);
+    if (
+      view?.state?.schema?.topNodeType?.createAndFill === undefined ||
+      view.state.doc === undefined ||
+      view.state.doc.content === undefined ||
+      view.state.tr === undefined ||
+      view.dispatch === undefined
+    ) {
+      return false;
     }
 
+    const freshDoc = view.state.schema.topNodeType.createAndFill();
+
+    if (freshDoc === null) {
+      return false;
+    }
+
+    const transaction = view.state.tr.replaceWith?.(
+      0,
+      view.state.doc.content.size,
+      freshDoc.content
+    );
+
+    if (transaction === undefined) {
+      return false;
+    }
+
+    view.dispatch(transaction);
+    view.focus?.();
     editor.dispatchEvent(new InputEvent("input", { bubbles: true }));
     editor.dispatchEvent(new Event("change", { bubbles: true }));
     return true;
@@ -1022,15 +1290,14 @@ async function waitForDraftToStayClear(
 
       await waitForUiTick(page);
       continue;
+      }
+
+      stableClearReads = 0;
+      await bringPageToFront(page);
+      await forceClearEditorDraft(page);
+
+      await waitForUiTick(page);
     }
-
-    stableClearReads = 0;
-    await bringPageToFront(page);
-    await clearEditorDraftByKeyboard(page);
-    await forceClearEditorDraft(page);
-
-    await waitForUiTick(page);
-  }
 
   throw new Error(formatDraftResidualError(lastState));
 }
@@ -1271,10 +1538,19 @@ async function clickVideoConfirmUntilDialogCloses(
   page: PlaywrightPageLike
 ): Promise<boolean> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const clicked = await clickFirstVisibleIfPresent(
-      page,
-      VIDEO_COVER_CONFIRM_SELECTORS
-    );
+    let clicked = false;
+
+    try {
+      clicked = await clickFirstVisibleIfPresent(page, VIDEO_COVER_CONFIRM_SELECTORS);
+    } catch {
+      await waitForUiTick(page);
+
+      if (!(await hasAnySelector(page, OPEN_DIALOG_SELECTORS))) {
+        return true;
+      }
+
+      return false;
+    }
 
     if (!clicked) {
       return false;
@@ -1427,9 +1703,23 @@ async function waitForDialogTextToClear(
         hasHeartbeatSource &&
         waitedPendingMs - lastHeartbeatAtMs >= heartbeatIntervalMs
       ) {
+        let heartbeatDialogText = dialogText;
+
+        if (
+          typeof options.heartbeatMessageFactory === "function" &&
+          extractVideoUploadProgressLabel(heartbeatDialogText) === null
+        ) {
+          await waitForUiTick(page);
+          const settledDialogText = await readFirstTextContentIfPossible(page, dialogSelectors);
+
+          if (settledDialogText !== null) {
+            heartbeatDialogText = settledDialogText;
+          }
+        }
+
         const heartbeatMessage =
           typeof options.heartbeatMessageFactory === "function"
-            ? options.heartbeatMessageFactory(dialogText, waitedPendingMs)
+            ? options.heartbeatMessageFactory(heartbeatDialogText, waitedPendingMs)
             : options.heartbeatMessage;
 
         if (typeof heartbeatMessage === "string" && heartbeatMessage.length > 0) {
@@ -1519,24 +1809,6 @@ function createPlaywrightPageAdapter(
 
       await forceClearTitleField(page);
 
-      if (!page.keyboard) {
-        await forceClearEditorDraft(page);
-        const stableState = await waitForDraftToStayClear(page);
-        baselineEditorVideoCount = stableState.videos;
-        baselineEditorVideoCoverCount = stableState.videoCovers;
-        return;
-      }
-
-      const editor = await pickVisibleLocator(page, EDITOR_BODY_SELECTORS, "正文编辑区");
-      await bringPageToFront(page);
-      await editor.click();
-
-      try {
-        await clearEditorDraftByKeyboard(page);
-      } catch {
-        // ignore
-      }
-
       await forceClearEditorDraft(page);
       const stableState = await waitForDraftToStayClear(page);
       baselineEditorVideoCount = stableState.videos;
@@ -1570,6 +1842,14 @@ function createPlaywrightPageAdapter(
       }
 
       await ensureEditorCaretReady(page);
+
+      if (await forceEditorCaretToBoundary(page, "start")) {
+        const anchoredState = await readEditorStartState(page);
+
+        if (anchoredState?.atStart ?? false) {
+          return;
+        }
+      }
 
       try {
         await moveEditorSelectionToBoundary(page, "start");
@@ -1641,6 +1921,8 @@ function createPlaywrightPageAdapter(
       if (currentValue !== null && currentValue.trim().length === 0) {
         throw new Error("视频标题未填入成功");
       }
+
+      await ensureVideoUploadTitle(page, title);
     },
     async setVideoCover(videoCoverPath) {
       await bringPageToFront(page);
@@ -1653,15 +1935,9 @@ function createPlaywrightPageAdapter(
         await trigger.locator.nth(0).click();
       }
 
-      await setInputFilesRobustly(
-        page,
-        VIDEO_COVER_UPLOAD_INPUT_SELECTORS,
-        videoCoverPath,
-        "可用视频封面上传控件"
-      );
-      await waitForUiTick(page);
+      await ensureVideoCoverUploadSelection(page, videoCoverPath);
     },
-    async ensureVideoReady() {
+    async ensureVideoReady(expectedVideoTitle, videoCoverPath) {
       await bringPageToFront(page);
       await waitForDialogTextToClear(
         page,
@@ -1675,6 +1951,12 @@ function createPlaywrightPageAdapter(
           heartbeatIntervalMs: VIDEO_UPLOAD_HEARTBEAT_INTERVAL_MS,
           heartbeatMessageFactory: buildVideoUploadHeartbeatMessage
         }
+      );
+
+      await ensureVideoUploadMetadata(
+        page,
+        expectedVideoTitle,
+        videoCoverPath
       );
 
       if (!(await clickVideoConfirmUntilDialogCloses(page))) {
