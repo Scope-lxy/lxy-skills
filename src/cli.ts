@@ -140,6 +140,7 @@ const VIDEO_COVER_CONFIRM_SELECTORS = [
 ] as const;
 
 const VIDEO_UPLOAD_PENDING_TEXTS = ["上传中", "取消上传"] as const;
+const VIDEO_CONFIRM_RETRY_DELAY_MS = 2000;
 
 const OPEN_DIALOG_SELECTORS = ['.omui-dialog-wrapper.open'] as const;
 const DIALOG_CLOSE_SELECTORS = [
@@ -961,6 +962,48 @@ async function waitForSelectorsToDisappear(
   throw new Error(`${description}未结束`);
 }
 
+async function hasAnySelector(page: PlaywrightPageLike, selectors: readonly string[]) {
+  for (const selector of selectors) {
+    if ((await page.locator(selector).count()) > 0) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function waitForVideoConfirmInterval(page: PlaywrightPageLike): Promise<void> {
+  if (typeof page.waitForTimeout === "function") {
+    await page.waitForTimeout(VIDEO_CONFIRM_RETRY_DELAY_MS);
+    return;
+  }
+
+  await waitForUiTick(page);
+}
+
+async function clickVideoConfirmUntilDialogCloses(
+  page: PlaywrightPageLike
+): Promise<boolean> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const clicked = await clickFirstVisibleIfPresent(
+      page,
+      VIDEO_COVER_CONFIRM_SELECTORS
+    );
+
+    if (!clicked) {
+      return false;
+    }
+
+    await waitForVideoConfirmInterval(page);
+
+    if (!(await hasAnySelector(page, OPEN_DIALOG_SELECTORS))) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 async function waitForInlineImageCountIncrease(
   page: PlaywrightPageLike,
   expectedCount: number
@@ -1338,24 +1381,8 @@ function createPlaywrightPageAdapter(page: PlaywrightPageLike): PenguinPublishPa
         "视频上传流程",
         VIDEO_UPLOAD_WAIT_ATTEMPTS
       );
-      const clickedConfirm = await clickFirstVisibleIfPresent(
-        page,
-        VIDEO_COVER_CONFIRM_SELECTORS
-      );
-
-      if (clickedConfirm) {
-        try {
-          await waitForSelectorsToDisappear(
-            page,
-            OPEN_DIALOG_SELECTORS,
-            "视频上传弹窗",
-            8
-          );
-          return;
-        } catch {
-          await waitForUiTick(page);
-          await clickFirstVisibleIfPresent(page, VIDEO_COVER_CONFIRM_SELECTORS);
-        }
+      if (await clickVideoConfirmUntilDialogCloses(page)) {
+        return;
       }
 
       try {
