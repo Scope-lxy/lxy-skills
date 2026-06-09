@@ -145,6 +145,8 @@ const VIDEO_COVER_UPLOAD_TAB_SELECTED_SELECTORS = [
   '.omui-dialog-wrapper.open .omui-tab__label[aria-selected="true"]:has-text("上传封面")',
   '.omui-dialog-wrapper.open li.omui-tab__label.omui-tab__label--active:has-text("上传封面")',
   '.omui-dialog-wrapper.open .omui-tab__label.omui-tab__label--active:has-text("上传封面")',
+  '.omui-dialog-wrapper.open li.omui-tab__label.is--active:has-text("上传封面")',
+  '.omui-dialog-wrapper.open .omui-tab__label.is--active:has-text("上传封面")',
   '.omui-dialog-wrapper.open li.omui-tab__label.is-active:has-text("上传封面")',
   '.omui-dialog-wrapper.open .omui-tab__label.is-active:has-text("上传封面")',
   '.omui-dialog-wrapper.open [role="tab"][aria-selected="true"]:has-text("上传封面")'
@@ -154,7 +156,8 @@ const VIDEO_COVER_UPLOAD_INPUT_SELECTORS = [
   '.omui-dialog-wrapper.open input[type="file"][accept*="image"]',
   'input[type="file"][accept*="image"]',
   'input[name*="cover"][type="file"]',
-  '[data-testid="video-cover-upload-input"]'
+  '[data-testid="video-cover-upload-input"]',
+  '.omui-dialog-wrapper.open input[type="file"]'
 ] as const;
 
 const VIDEO_COVER_CONFIRM_SELECTORS = [
@@ -304,6 +307,8 @@ const ARTICLE_COVER_LOCAL_TAB_SELECTED_SELECTORS = [
   '.omui-dialog-wrapper.open .omui-tab__label[aria-selected="true"]:has-text("本地上传")',
   '.omui-dialog-wrapper.open li.omui-tab__label.omui-tab__label--active:has-text("本地上传")',
   '.omui-dialog-wrapper.open .omui-tab__label.omui-tab__label--active:has-text("本地上传")',
+  '.omui-dialog-wrapper.open li.omui-tab__label.is--active:has-text("本地上传")',
+  '.omui-dialog-wrapper.open .omui-tab__label.is--active:has-text("本地上传")',
   '.omui-dialog-wrapper.open li.omui-tab__label.is-active:has-text("本地上传")',
   '.omui-dialog-wrapper.open .omui-tab__label.is-active:has-text("本地上传")',
   '.omui-dialog-wrapper.open [role="tab"][aria-selected="true"]:has-text("本地上传")'
@@ -1070,6 +1075,159 @@ async function readVideoCoverSelectedFileNameIfPossible(
   }, VIDEO_COVER_UPLOAD_INPUT_SELECTORS);
 }
 
+async function collectVideoCoverDebugEvidenceIfEnabled(
+  page: PlaywrightPageLike
+): Promise<string | null> {
+  if (process.env.IX_VIDEO_COVER_DEBUG !== "1" || typeof page.evaluate !== "function") {
+    return null;
+  }
+
+  let screenshotPath: string | null = null;
+
+  if (typeof page.screenshot === "function") {
+    try {
+      screenshotPath = resolve("work", "video-cover-debug.png");
+      await page.screenshot({
+        path: screenshotPath,
+        fullPage: true
+      });
+    } catch {
+      screenshotPath = null;
+    }
+  }
+
+  try {
+    const summary = await page.evaluate<
+      {
+        tabs: string[];
+        buttons: string[];
+        fileInputs: string[];
+      },
+      {
+        triggerSelectors: readonly string[];
+      }
+    >((input) => {
+      const dialog = document.querySelector(".omui-dialog-wrapper.open");
+
+      if (!(dialog instanceof HTMLElement)) {
+        return {
+          tabs: [],
+          buttons: [],
+          fileInputs: []
+        };
+      }
+
+      const tabs = Array.from(dialog.querySelectorAll<HTMLElement>(".omui-tab__label")).map(
+        (tab) => {
+          const text = tab.textContent?.trim() || "(empty)";
+          return `${text}::${tab.className || "-"}`;
+        }
+      );
+
+      const buttons = Array.from(dialog.querySelectorAll<HTMLElement>("button, [role='button']"))
+        .map((button) => {
+          const text = button.textContent?.replace(/\s+/gu, " ").trim() || "(empty)";
+          const matchedTrigger = input.triggerSelectors.some((selector) => {
+            try {
+              return button.matches(selector);
+            } catch {
+              return false;
+            }
+          });
+
+          return `${text}${matchedTrigger ? "[trigger]" : ""}::${button.className || "-"}`;
+        })
+        .filter((text) => text !== "(empty)::-" && text !== "(empty)::");
+
+      const fileInputs = Array.from(
+        dialog.querySelectorAll<HTMLInputElement>('input[type="file"]')
+      ).map((input) => {
+        const fileName =
+          input.files?.item(0)?.name ||
+          input.value.trim().split(/[\\/]/u).pop() ||
+          "-";
+        return `name=${input.name || "-"},accept=${input.accept || "-"},file=${fileName},class=${input.className || "-"}`;
+      });
+
+      return {
+        tabs,
+        buttons,
+        fileInputs
+      };
+    }, {
+      triggerSelectors: VIDEO_COVER_TRIGGER_SELECTORS
+    });
+
+    const parts = [
+      summary.tabs.length > 0 ? `tabs=${summary.tabs.join(" | ")}` : "tabs=none",
+      summary.buttons.length > 0
+        ? `buttons=${summary.buttons.join(" | ")}`
+        : "buttons=none",
+      summary.fileInputs.length > 0
+        ? `fileInputs=${summary.fileInputs.join(" | ")}`
+        : "fileInputs=none"
+    ];
+
+    if (screenshotPath !== null) {
+      parts.push(`screenshot=${screenshotPath}`);
+    }
+
+    return parts.join("；");
+  } catch {
+    return screenshotPath !== null ? `screenshot=${screenshotPath}` : null;
+  }
+}
+
+async function hasDialogVideoCoverPreviewSignal(
+  page: PlaywrightPageLike
+): Promise<boolean> {
+  if (typeof page.evaluate !== "function") {
+    return false;
+  }
+
+  try {
+    return await page.evaluate<boolean>(() => {
+      const marker = "__ixbrowserHasVideoCoverPreviewSignal";
+      void marker;
+
+      const dialog = document.querySelector(".omui-dialog-wrapper.open");
+
+      if (!(dialog instanceof HTMLElement)) {
+        return false;
+      }
+
+      const uploadCoverTabActive = Array.from(
+        dialog.querySelectorAll<HTMLElement>(".omui-tab__label")
+      ).some((tab) => {
+        const text = tab.textContent?.replace(/\s+/gu, "") ?? "";
+        const className = tab.className;
+        return (
+          text.includes("上传封面") &&
+          (tab.getAttribute("aria-selected") === "true" ||
+            className.includes("omui-tab__label--active") ||
+            className.includes("is--active") ||
+            className.includes("is-active"))
+        );
+      });
+
+      if (!uploadCoverTabActive) {
+        return false;
+      }
+
+      const previewCandidates = Array.from(
+        dialog.querySelectorAll<HTMLElement>("img, canvas, [style*='background-image']")
+      );
+
+      return previewCandidates.some((candidate) => {
+        const rect = candidate.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      });
+    });
+  } catch {
+    return false;
+  }
+}
+
 async function ensureVideoCoverUploadTabSelected(
   page: PlaywrightPageLike
 ): Promise<boolean> {
@@ -1077,6 +1235,10 @@ async function ensureVideoCoverUploadTabSelected(
     if (
       await hasExplicitVisibleSignal(page, VIDEO_COVER_UPLOAD_TAB_SELECTED_SELECTORS)
     ) {
+      return true;
+    }
+
+    if (await hasExplicitVisibleSignal(page, VIDEO_COVER_UPLOAD_INPUT_SELECTORS)) {
       return true;
     }
 
@@ -1092,7 +1254,11 @@ async function ensureVideoCoverUploadTabSelected(
     await waitForUiTick(page);
   }
 
-  return hasExplicitVisibleSignal(page, VIDEO_COVER_UPLOAD_TAB_SELECTED_SELECTORS);
+  if (await hasExplicitVisibleSignal(page, VIDEO_COVER_UPLOAD_TAB_SELECTED_SELECTORS)) {
+    return true;
+  }
+
+  return hasExplicitVisibleSignal(page, VIDEO_COVER_UPLOAD_INPUT_SELECTORS);
 }
 
 async function ensureVideoUploadTitle(
@@ -1150,24 +1316,26 @@ async function ensureVideoCoverUploadSelection(
   const expectedFileName = basename(videoCoverPath);
   let lastObservedFileName: string | null = null;
   let lastError: unknown = null;
+  let lastDebugEvidence: string | null = null;
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const uploadTabSelected = await ensureVideoCoverUploadTabSelected(page);
-
-    if (!uploadTabSelected) {
-      lastError = new Error("视频封面未选中【上传封面】侧");
-      await waitForUiTick(page);
-      continue;
-    }
+    await clickFirstVisibleIfPresent(page, VIDEO_COVER_LOCAL_TAB_SELECTORS);
+    await ensureVideoCoverUploadTabSelected(page);
 
     const currentFileName = await readVideoCoverSelectedFileNameIfPossible(page);
+    const dialogPreviewReady = await hasDialogVideoCoverPreviewSignal(page);
     const normalizedCurrentFileName = currentFileName?.trim() ?? null;
     lastObservedFileName = normalizedCurrentFileName;
+    lastDebugEvidence = await collectVideoCoverDebugEvidenceIfEnabled(page);
 
     if (
       normalizedCurrentFileName !== null &&
       basename(normalizedCurrentFileName) === expectedFileName
     ) {
+      return;
+    }
+
+    if (dialogPreviewReady) {
       return;
     }
 
@@ -1187,35 +1355,56 @@ async function ensureVideoCoverUploadSelection(
         page,
         VIDEO_COVER_UPLOAD_TAB_SELECTED_SELECTORS
       );
+      const uploadInputVisible = await hasExplicitVisibleSignal(
+        page,
+        VIDEO_COVER_UPLOAD_INPUT_SELECTORS
+      );
       const videoCoverReady = await hasExplicitVisibleSignal(
         page,
         VIDEO_COVER_READY_SELECTORS
       );
+      const dialogPreviewReady = await hasDialogVideoCoverPreviewSignal(page);
+      lastDebugEvidence = await collectVideoCoverDebugEvidenceIfEnabled(page);
 
-      if (uploadTabSelected && videoCoverReady) {
+      if ((uploadTabSelected || uploadInputVisible) && (videoCoverReady || dialogPreviewReady)) {
         return;
       }
 
-      if (!uploadTabSelected && videoCoverReady) {
+      if (!uploadTabSelected && !uploadInputVisible && (videoCoverReady || dialogPreviewReady)) {
         lastError = new Error("视频封面未选中【上传封面】侧");
+      } else if (!uploadTabSelected && !uploadInputVisible) {
+        lastError = new Error("未找到可用视频封面上传控件");
       }
 
       await waitForUiTick(page);
       continue;
     }
 
-    const verifiedFileName = await readVideoCoverSelectedFileNameIfPossible(page);
-    const normalizedVerifiedFileName = verifiedFileName?.trim() ?? null;
-    lastObservedFileName = normalizedVerifiedFileName;
+    for (let settleAttempt = 0; settleAttempt < 20; settleAttempt += 1) {
+      const verifiedFileName = await readVideoCoverSelectedFileNameIfPossible(page);
+      const dialogPreviewReady = await hasDialogVideoCoverPreviewSignal(page);
+      const normalizedVerifiedFileName = verifiedFileName?.trim() ?? null;
+      lastObservedFileName = normalizedVerifiedFileName;
+      lastDebugEvidence = await collectVideoCoverDebugEvidenceIfEnabled(page);
 
-    if (
-      normalizedVerifiedFileName !== null &&
-      basename(normalizedVerifiedFileName) === expectedFileName
-    ) {
-      return;
+      if (
+        normalizedVerifiedFileName !== null &&
+        basename(normalizedVerifiedFileName) === expectedFileName
+      ) {
+        return;
+      }
+
+      if (
+        dialogPreviewReady ||
+        (await hasExplicitVisibleSignal(page, VIDEO_COVER_READY_SELECTORS))
+      ) {
+        return;
+      }
+
+      if (settleAttempt < 19) {
+        await waitForUiTick(page);
+      }
     }
-
-    await waitForUiTick(page);
   }
 
   const observedFileName =
@@ -1224,10 +1413,21 @@ async function ensureVideoCoverUploadSelection(
       : "";
 
   if (lastError instanceof Error) {
-    throw new Error(`视频封面与目标不一致${observedFileName}；${lastError.message}`);
+    const debugEvidence =
+      lastDebugEvidence !== null && lastDebugEvidence.length > 0
+        ? `；调试=${lastDebugEvidence}`
+        : "";
+    throw new Error(
+      `视频封面与目标不一致${observedFileName}；${lastError.message}${debugEvidence}`
+    );
   }
 
-  throw new Error(`视频封面与目标不一致${observedFileName}`);
+  const debugEvidence =
+    lastDebugEvidence !== null && lastDebugEvidence.length > 0
+      ? `；调试=${lastDebugEvidence}`
+      : "";
+
+  throw new Error(`视频封面与目标不一致${observedFileName}${debugEvidence}`);
 }
 
 async function ensureVideoUploadMetadata(
@@ -1236,6 +1436,15 @@ async function ensureVideoUploadMetadata(
   videoCoverPath: string
 ): Promise<void> {
   await ensureVideoUploadTitle(page, expectedVideoTitle);
+  const reopenedCoverPicker = await clickFirstVisibleIfPresent(
+    page,
+    VIDEO_COVER_TRIGGER_SELECTORS
+  );
+
+  if (reopenedCoverPicker) {
+    await waitForUiTick(page);
+  }
+
   await ensureVideoCoverUploadSelection(page, videoCoverPath);
 }
 
@@ -2055,7 +2264,7 @@ function buildVideoUploadPendingErrorDetails(
     : "视频上传流程未结束";
 }
 
-function createPlaywrightPageAdapter(
+export function createPlaywrightPageAdapter(
   page: PlaywrightPageLike,
   reportProgress?: ProgressReporter
 ): PenguinPublishPageLike {

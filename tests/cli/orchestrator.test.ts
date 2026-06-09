@@ -999,6 +999,93 @@ describe("runCommand", () => {
     ).toBe(false);
   });
 
+  it("accepts the video cover upload tab when the upload input is visible even if the selected-state marker is missing", async () => {
+    const actions: string[] = [];
+    const fakePage = createPlaywrightLikePage(
+      {
+        'span.omui-inputautogrowing__inner[contenteditable="true"][data-placeholder*="标题"]': {
+          count: 1
+        },
+        'div.ProseMirror.ExEditor-basic[contenteditable="true"]': { count: 1 },
+        '.ProseMirror div.video[data-widget="video"]': { count: 1, countSequence: [0, 1] },
+        '.ProseMirror div.video[data-widget="video"] video[poster]': {
+          count: 1,
+          countSequence: [0, 1]
+        },
+        'button.exeditor-menu-basic-video': { count: 1 },
+        'input[name="Filedata"][type="file"]': { count: 1, visible: [true] },
+        'input[placeholder="请输入标题名称"]': { count: 1 },
+        'button:has-text("上传封面")': { count: 1 },
+        '.omui-dialog-wrapper.open li.omui-tab__label:has-text("上传封面")': {
+          count: 1
+        },
+        '.omui-dialog-wrapper.open .omui-tab__label:has-text("上传封面")': {
+          count: 1
+        },
+        '.omui-dialog-wrapper.open': {
+          count: 1,
+          countSequence: [1, 0]
+        },
+        '.omui-dialog-wrapper.open input[type="file"][multiple]': { count: 1 },
+        '.omui-dialog-wrapper.open input[type="file"][accept*="image"]': { count: 1 },
+        '#articlePublish-coverinfo span:has-text("更换")': { count: 1 },
+        '.omui-dialog-wrapper.open li.omui-tab__label': { count: 2 },
+        '.omui-dialog-wrapper.open .omui-dialog-footer button.omui-button--primary': { count: 1 },
+        'exeditor-toolbar-button[data-toolbar-item-of="imagePlugin"]': { count: 1 },
+        '#articlePublish-selfDeclaration button.omui-button--dashed': { count: 1 },
+        'label:has-text("剧情演绎，仅供娱乐")': { count: 1 },
+        '.omui-dialog-wrapper.open button:has-text("确认")': { count: 1 },
+        '#articlePublish-resourceAigcMarkInfo a': { count: 1 },
+        '.omui-dialog-wrapper.open button:has-text("提交")': { count: 1 },
+        'text=已完成AI生成素材声明': {
+          count: 1,
+          countSequence: [...Array(20).fill(0), 1]
+        },
+        'text=剧情演绎，仅供娱乐': {
+          count: 1,
+          countSequence: [...Array(20).fill(0), 1]
+        },
+        '[data-video-ready="true"]': { count: 1 },
+        '[data-video-cover-ready="true"]': { count: 1 },
+        '[data-inline-image="true"]': { count: 2 },
+        '[data-article-cover-applied="true"]': { count: 1 }
+      },
+      actions,
+      {
+        videoCoverTabModeWhenOpened: "upload",
+        videoCoverLocalTabClickSetsUpload: false
+      }
+    );
+
+    const summary = await runCommand("/发企鹅号 22窗口", {
+      loadConfig: async () => ({
+        ixBrowserApiBaseUrl: "http://127.0.0.1:53200",
+        penguinPublishUrl: "https://om.qq.com/article/publish",
+        assetsRoot: "C:/企鹅号发布",
+        mode: "pause-before-publish" as const
+      }),
+      allocateVideosForProfiles: async () => [
+        {
+          profileId: 22,
+          videoPath: "C:/企鹅号发布/videos/upload-input.mp4",
+          title: "upload-input"
+        }
+      ],
+      pickRandomCover: async () => "C:/企鹅号发布/video-covers/upload-input.png",
+      pickArticleAssetSet: async () => createArticleAssets(),
+      openProfile: async () => ({
+        ws: "ws://profile-22"
+      }),
+      connectBrowser: vi.fn().mockResolvedValue(createBrowser(fakePage.page)),
+      writeRunEvent: createWriteRunEventMock()
+    });
+
+    expect(summary).toEqual(["22窗口：upload-input 已完成，停在发布前"]);
+    expect(actions).toContain(
+      "setInputFiles:.omui-dialog-wrapper.open input[type=\"file\"][accept*=\"image\"]:0:C:/企鹅号发布/video-covers/upload-input.png"
+    );
+  });
+
   it("moves a video to used only after auto publish succeeds", async () => {
     const browser = createBrowser(createPage("page-1"));
     const writeRunEvent = createWriteRunEventMock();
