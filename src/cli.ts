@@ -140,6 +140,16 @@ const VIDEO_COVER_LOCAL_TAB_SELECTORS = [
   '.omui-dialog-wrapper.open .omui-tab__label:has-text("上传封面")'
 ] as const;
 
+const VIDEO_COVER_UPLOAD_TAB_SELECTED_SELECTORS = [
+  '.omui-dialog-wrapper.open li.omui-tab__label[aria-selected="true"]:has-text("上传封面")',
+  '.omui-dialog-wrapper.open .omui-tab__label[aria-selected="true"]:has-text("上传封面")',
+  '.omui-dialog-wrapper.open li.omui-tab__label.omui-tab__label--active:has-text("上传封面")',
+  '.omui-dialog-wrapper.open .omui-tab__label.omui-tab__label--active:has-text("上传封面")',
+  '.omui-dialog-wrapper.open li.omui-tab__label.is-active:has-text("上传封面")',
+  '.omui-dialog-wrapper.open .omui-tab__label.is-active:has-text("上传封面")',
+  '.omui-dialog-wrapper.open [role="tab"][aria-selected="true"]:has-text("上传封面")'
+] as const;
+
 const VIDEO_COVER_UPLOAD_INPUT_SELECTORS = [
   '.omui-dialog-wrapper.open input[type="file"][accept*="image"]',
   'input[type="file"][accept*="image"]',
@@ -154,11 +164,13 @@ const VIDEO_COVER_CONFIRM_SELECTORS = [
 ] as const;
 
 const VIDEO_UPLOAD_PENDING_TEXTS = ["上传中", "取消上传"] as const;
-const VIDEO_CONFIRM_RETRY_DELAY_MS = 2000;
+const VIDEO_CONFIRM_INITIAL_SETTLE_ATTEMPTS = 10;
+const VIDEO_CONFIRM_BUSY_SETTLE_ATTEMPTS = 24;
 const UI_TICK_MS = 500;
 const DRAFT_RESTORE_WAIT_MS = 10000;
 const VIDEO_UPLOAD_HEARTBEAT_INTERVAL_MS = 30000;
 const VIDEO_UPLOAD_HEARTBEAT_BASE_MESSAGE = "继续等待，不要结束任务";
+const PUBLISH_SUCCESS_WAIT_ATTEMPTS = 40;
 
 const OPEN_DIALOG_SELECTORS = ['.omui-dialog-wrapper.open'] as const;
 const DIALOG_CLOSE_SELECTORS = [
@@ -285,6 +297,16 @@ const ARTICLE_COVER_TRIGGER_SELECTORS = [
 const ARTICLE_COVER_LOCAL_TAB_SELECTORS = [
   '.omui-dialog-wrapper.open li.omui-tab__label:has-text("本地上传")',
   '.omui-dialog-wrapper.open .omui-tab__label:has-text("本地上传")'
+] as const;
+
+const ARTICLE_COVER_LOCAL_TAB_SELECTED_SELECTORS = [
+  '.omui-dialog-wrapper.open li.omui-tab__label[aria-selected="true"]:has-text("本地上传")',
+  '.omui-dialog-wrapper.open .omui-tab__label[aria-selected="true"]:has-text("本地上传")',
+  '.omui-dialog-wrapper.open li.omui-tab__label.omui-tab__label--active:has-text("本地上传")',
+  '.omui-dialog-wrapper.open .omui-tab__label.omui-tab__label--active:has-text("本地上传")',
+  '.omui-dialog-wrapper.open li.omui-tab__label.is-active:has-text("本地上传")',
+  '.omui-dialog-wrapper.open .omui-tab__label.is-active:has-text("本地上传")',
+  '.omui-dialog-wrapper.open [role="tab"][aria-selected="true"]:has-text("本地上传")'
 ] as const;
 
 const ARTICLE_COVER_UPLOAD_INPUT_SELECTORS = [
@@ -679,6 +701,75 @@ async function hasExplicitVisibleSignal(
   return (await findVisibleLocatorGroup(page, selectors)) !== null;
 }
 
+async function readCurrentUrlIfPossible(
+  page: PlaywrightPageLike
+): Promise<string | null> {
+  if (typeof page.evaluate !== "function") {
+    return null;
+  }
+
+  try {
+    const currentUrl = await page.evaluate<string>(() => window.location.href);
+    return typeof currentUrl === "string" && currentUrl.trim().length > 0
+      ? currentUrl.trim()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function isPublishEditorUrl(url: string): boolean {
+  return /\/article\/publish(?:[/?#]|$)/u.test(url);
+}
+
+function hasPublishSucceededByUrl(
+  initialUrl: string | null,
+  currentUrl: string | null
+): boolean {
+  if (typeof currentUrl !== "string" || currentUrl.trim().length === 0) {
+    return false;
+  }
+
+  const normalizedCurrentUrl = currentUrl.trim();
+
+  if (isPublishEditorUrl(normalizedCurrentUrl)) {
+    return false;
+  }
+
+  if (initialUrl === null) {
+    return true;
+  }
+
+  return normalizedCurrentUrl !== initialUrl.trim();
+}
+
+async function waitForPublishSuccessNavigation(
+  page: PlaywrightPageLike,
+  initialUrl: string | null
+): Promise<void> {
+  if (typeof page.evaluate !== "function") {
+    return;
+  }
+
+  for (let attempt = 0; attempt < PUBLISH_SUCCESS_WAIT_ATTEMPTS; attempt += 1) {
+    const currentUrl = await readCurrentUrlIfPossible(page);
+
+    if (hasPublishSucceededByUrl(initialUrl, currentUrl)) {
+      return;
+    }
+
+    await waitForUiTick(page);
+  }
+
+  const currentUrl = await readCurrentUrlIfPossible(page);
+
+  if (typeof currentUrl === "string" && isPublishEditorUrl(currentUrl)) {
+    throw new Error(`点击发布后仍停留在发布页，未确认发布成功（当前URL="${currentUrl}"）`);
+  }
+
+  throw new Error("点击发布后未确认发布成功");
+}
+
 async function bringPageToFront(page: PlaywrightPageLike): Promise<void> {
   if (typeof page.bringToFront === "function") {
     await page.bringToFront();
@@ -979,6 +1070,31 @@ async function readVideoCoverSelectedFileNameIfPossible(
   }, VIDEO_COVER_UPLOAD_INPUT_SELECTORS);
 }
 
+async function ensureVideoCoverUploadTabSelected(
+  page: PlaywrightPageLike
+): Promise<boolean> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (
+      await hasExplicitVisibleSignal(page, VIDEO_COVER_UPLOAD_TAB_SELECTED_SELECTORS)
+    ) {
+      return true;
+    }
+
+    const clicked = await clickFirstVisibleIfPresent(
+      page,
+      VIDEO_COVER_LOCAL_TAB_SELECTORS
+    );
+
+    if (!clicked) {
+      break;
+    }
+
+    await waitForUiTick(page);
+  }
+
+  return hasExplicitVisibleSignal(page, VIDEO_COVER_UPLOAD_TAB_SELECTED_SELECTORS);
+}
+
 async function ensureVideoUploadTitle(
   page: PlaywrightPageLike,
   expectedTitle: string
@@ -1036,7 +1152,13 @@ async function ensureVideoCoverUploadSelection(
   let lastError: unknown = null;
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    await clickFirstVisibleIfPresent(page, VIDEO_COVER_LOCAL_TAB_SELECTORS);
+    const uploadTabSelected = await ensureVideoCoverUploadTabSelected(page);
+
+    if (!uploadTabSelected) {
+      lastError = new Error("视频封面未选中【上传封面】侧");
+      await waitForUiTick(page);
+      continue;
+    }
 
     const currentFileName = await readVideoCoverSelectedFileNameIfPossible(page);
     const normalizedCurrentFileName = currentFileName?.trim() ?? null;
@@ -1060,6 +1182,24 @@ async function ensureVideoCoverUploadSelection(
       );
     } catch (error) {
       lastError = error;
+
+      const uploadTabSelected = await hasExplicitVisibleSignal(
+        page,
+        VIDEO_COVER_UPLOAD_TAB_SELECTED_SELECTORS
+      );
+      const videoCoverReady = await hasExplicitVisibleSignal(
+        page,
+        VIDEO_COVER_READY_SELECTORS
+      );
+
+      if (uploadTabSelected && videoCoverReady) {
+        return;
+      }
+
+      if (!uploadTabSelected && videoCoverReady) {
+        lastError = new Error("视频封面未选中【上传封面】侧");
+      }
+
       await waitForUiTick(page);
       continue;
     }
@@ -1097,6 +1237,39 @@ async function ensureVideoUploadMetadata(
 ): Promise<void> {
   await ensureVideoUploadTitle(page, expectedVideoTitle);
   await ensureVideoCoverUploadSelection(page, videoCoverPath);
+}
+
+async function ensureArticleCoverLocalTabSelected(
+  page: PlaywrightPageLike
+): Promise<boolean> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (
+      await hasExplicitVisibleSignal(page, ARTICLE_COVER_LOCAL_TAB_SELECTED_SELECTORS)
+    ) {
+      return true;
+    }
+
+    if (await hasExplicitVisibleSignal(page, ARTICLE_COVER_UPLOAD_INPUT_SELECTORS)) {
+      return true;
+    }
+
+    const clicked = await clickFirstVisibleIfPresent(
+      page,
+      ARTICLE_COVER_LOCAL_TAB_SELECTORS
+    );
+
+    if (!clicked) {
+      break;
+    }
+
+    await waitForUiTick(page);
+  }
+
+  if (await hasExplicitVisibleSignal(page, ARTICLE_COVER_LOCAL_TAB_SELECTED_SELECTORS)) {
+    return true;
+  }
+
+  return hasExplicitVisibleSignal(page, ARTICLE_COVER_UPLOAD_INPUT_SELECTORS);
 }
 
 async function forceClearTitleField(page: PlaywrightPageLike): Promise<boolean> {
@@ -1525,13 +1698,124 @@ async function hasAnySelector(page: PlaywrightPageLike, selectors: readonly stri
   return false;
 }
 
-async function waitForVideoConfirmInterval(page: PlaywrightPageLike): Promise<void> {
-  if (typeof page.waitForTimeout === "function") {
-    await page.waitForTimeout(VIDEO_CONFIRM_RETRY_DELAY_MS);
-    return;
+interface VideoConfirmProgressState {
+  dialogOpen: boolean;
+  buttonPresent: boolean;
+  buttonBusy: boolean;
+}
+
+async function readVideoConfirmProgressState(
+  page: PlaywrightPageLike
+): Promise<VideoConfirmProgressState | null> {
+  if (typeof page.evaluate !== "function") {
+    return null;
   }
 
-  await waitForUiTick(page);
+  try {
+    return await page.evaluate<
+      VideoConfirmProgressState,
+      {
+        dialogSelectors: readonly string[];
+        buttonSelectors: readonly string[];
+      }
+    >((input) => {
+      const marker = "__ixbrowserReadVideoConfirmProgressState";
+      void marker;
+
+      const dialogOpen = input.dialogSelectors.some((selector) => {
+        return document.querySelector(selector) !== null;
+      });
+
+      const button = input.buttonSelectors
+        .map((selector) => document.querySelector(selector))
+        .find((candidate): candidate is HTMLButtonElement | HTMLElement => {
+          return candidate instanceof HTMLButtonElement || candidate instanceof HTMLElement;
+        });
+
+      if (!(button instanceof HTMLElement)) {
+        return {
+          dialogOpen,
+          buttonPresent: false,
+          buttonBusy: false
+        };
+      }
+
+      const className = button.className.toString().toLowerCase();
+      const ariaBusy = button.getAttribute("aria-busy");
+      const text = (button.textContent ?? "").replace(/\s+/gu, "");
+      const hasSpinner =
+        button.querySelector(
+          '.omui-icon-loading, .omui-loading, [class*="loading"], [class*="spinner"], svg[class*="loading"]'
+        ) !== null;
+      const buttonBusy =
+        button.matches(":disabled") ||
+        button.getAttribute("disabled") !== null ||
+        ariaBusy === "true" ||
+        className.includes("loading") ||
+        className.includes("spinning") ||
+        className.includes("pending") ||
+        hasSpinner ||
+        ["处理中", "提交中", "保存中", "请稍候", "加载中"].some((signal) => {
+          return text.includes(signal.replace(/\s+/gu, ""));
+        });
+
+      return {
+        dialogOpen,
+        buttonPresent: true,
+        buttonBusy
+      };
+    }, {
+      dialogSelectors: OPEN_DIALOG_SELECTORS,
+      buttonSelectors: VIDEO_COVER_CONFIRM_SELECTORS
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function waitForVideoConfirmAfterClick(
+  page: PlaywrightPageLike
+): Promise<"closed" | "retry" | "processing"> {
+  let sawBusySignal = false;
+  let idleTicksAfterBusy = 0;
+
+  for (let attempt = 0; attempt < VIDEO_CONFIRM_BUSY_SETTLE_ATTEMPTS; attempt += 1) {
+    if (!(await hasAnySelector(page, OPEN_DIALOG_SELECTORS))) {
+      return "closed";
+    }
+
+    const progress = await readVideoConfirmProgressState(page);
+    const buttonLooksBusy =
+      progress !== null &&
+      progress.dialogOpen &&
+      (!progress.buttonPresent || progress.buttonBusy);
+
+    if (buttonLooksBusy) {
+      sawBusySignal = true;
+      idleTicksAfterBusy = 0;
+      await waitForUiTick(page);
+      continue;
+    }
+
+    if (sawBusySignal) {
+      idleTicksAfterBusy += 1;
+
+      if (idleTicksAfterBusy >= 2) {
+        return "retry";
+      }
+
+      await waitForUiTick(page);
+      continue;
+    }
+
+    if (attempt + 1 >= VIDEO_CONFIRM_INITIAL_SETTLE_ATTEMPTS) {
+      return "retry";
+    }
+
+    await waitForUiTick(page);
+  }
+
+  return sawBusySignal ? "processing" : "retry";
 }
 
 async function clickVideoConfirmUntilDialogCloses(
@@ -1556,10 +1840,14 @@ async function clickVideoConfirmUntilDialogCloses(
       return false;
     }
 
-    await waitForVideoConfirmInterval(page);
+    const settleState = await waitForVideoConfirmAfterClick(page);
 
-    if (!(await hasAnySelector(page, OPEN_DIALOG_SELECTORS))) {
+    if (settleState === "closed") {
       return true;
+    }
+
+    if (settleState === "processing") {
+      return false;
     }
   }
 
@@ -2051,7 +2339,12 @@ function createPlaywrightPageAdapter(
         "文章封面入口按钮"
       );
       await trigger.click();
-      await clickFirstVisibleIfPresent(page, ARTICLE_COVER_LOCAL_TAB_SELECTORS);
+      const localUploadSelected = await ensureArticleCoverLocalTabSelected(page);
+
+      if (!localUploadSelected) {
+        throw new Error("文章封面未选中【本地上传】侧");
+      }
+
       await setInputFilesRobustly(
         page,
         ARTICLE_COVER_UPLOAD_INPUT_SELECTORS,
@@ -2158,9 +2451,13 @@ function createPlaywrightPageAdapter(
       return filePath;
     },
     async clickPublish() {
+      await bringPageToFront(page);
+      const initialUrl = await readCurrentUrlIfPossible(page);
+
       if (page.getByRole) {
         await page.getByRole("button", { name: /发布/u }).click();
         await waitForUiTick(page);
+        await waitForPublishSuccessNavigation(page, initialUrl);
         return;
       }
 
@@ -2170,6 +2467,7 @@ function createPlaywrightPageAdapter(
       ], "可用发布按钮");
       await locator.click();
       await waitForUiTick(page);
+      await waitForPublishSuccessNavigation(page, initialUrl);
     }
   };
 }
