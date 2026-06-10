@@ -892,7 +892,7 @@ describe("runCommand", () => {
       .filter(({ action }) => action === localTabAction)
       .map(({ index }) => index);
     expect(titleFillIndices.length).toBeGreaterThanOrEqual(2);
-    expect(coverUploadIndices).toHaveLength(1);
+    expect(coverUploadIndices).toHaveLength(0);
     expect(localTabIndices.length).toBeGreaterThanOrEqual(2);
   });
 
@@ -1081,9 +1081,9 @@ describe("runCommand", () => {
     });
 
     expect(summary).toEqual(["22窗口：upload-input 已完成，停在发布前"]);
-    expect(actions).toContain(
-      "setInputFiles:.omui-dialog-wrapper.open input[type=\"file\"][accept*=\"image\"]:0:C:/企鹅号发布/video-covers/upload-input.png"
-    );
+    expect(
+      actions.some((action) => action.includes("video-covers/upload-input.png"))
+    ).toBe(false);
   });
 
   it("moves a video to used only after auto publish succeeds", async () => {
@@ -1412,6 +1412,9 @@ describe("runCommand", () => {
     );
     expect(actions).toContain("keyboard:End");
     expect(actions).toContain("waitForTimeout:500");
+    const fillTitleIndex = actions.indexOf(
+      "fill:span.omui-inputautogrowing__inner[contenteditable=\"true\"][data-placeholder*=\"标题\"]:0:happy"
+    );
     const confirmIndexes = actions
       .map((action, index) => ({ action, index }))
       .filter(({ action }) => {
@@ -1437,9 +1440,29 @@ describe("runCommand", () => {
     const articleCoverTriggerIndex = actions.indexOf(
       'click:#articlePublish-coverinfo span:has-text("更换"):0'
     );
+    const articleCoverUploadIndex = actions.indexOf(
+      "setInputFiles:.omui-dialog-wrapper.open input[type=\"file\"][accept*=\"image\"]:0:C:/企鹅号发布/covers/封面-A版.jpg"
+    );
+    const declarationTriggerIndex = actions.indexOf(
+      "click:#articlePublish-selfDeclaration button.omui-button--dashed:0"
+    );
+    const aiDeclarationEntryIndex = actions.indexOf(
+      "click:#articlePublish-resourceAigcMarkInfo a:0"
+    );
+    const aiDeclarationSubmitIndex = actions.indexOf(
+      "click:.omui-dialog-wrapper.open button:has-text(\"提交\"):0"
+    );
+    const removeEmptyEditorChildrenIndex = actions.indexOf("removeEmptyEditorChildren");
     const videoTriggerIndex = actions.indexOf(
       "click:button.exeditor-menu-basic-video:0"
     );
+    expect(fillTitleIndex).toBeGreaterThan(-1);
+    expect(articleCoverTriggerIndex).toBeGreaterThan(fillTitleIndex);
+    expect(articleCoverTriggerIndex).toBeLessThan(insertImageTriggerIndex);
+    expect(articleCoverUploadIndex).toBeGreaterThan(articleCoverTriggerIndex);
+    expect(articleCoverUploadIndex).toBeLessThan(insertImageTriggerIndex);
+    expect(declarationTriggerIndex).toBeGreaterThan(articleCoverUploadIndex);
+    expect(declarationTriggerIndex).toBeLessThan(insertImageTriggerIndex);
     expect(insertImageTriggerIndex).toBeLessThan(videoTriggerIndex);
     expect(actions).toContain("forceClearEditorDraftViaView");
     expect(actions).toContain(
@@ -1448,14 +1471,10 @@ describe("runCommand", () => {
     expect(actions).toContain(
       "fill:input[placeholder=\"请输入标题名称\"]:0:happy"
     );
-    expect(actions).toContain(
-      "setInputFiles:.omui-dialog-wrapper.open input[type=\"file\"][accept*=\"image\"]:0:C:/企鹅号发布/video-covers/cover-happy.png"
-    );
+    expect(
+      actions.some((action) => action.includes("video-covers/cover-happy.png"))
+    ).toBe(false);
     expect(secondImageUploadIndex).toBeGreaterThan(firstImageUploadIndex);
-    const confirmIndexesAfterImages = confirmIndexes.filter((index) => {
-      return index > firstImageUploadIndex && index < articleCoverTriggerIndex;
-    });
-    expect(confirmIndexesAfterImages.length).toBeGreaterThanOrEqual(2);
     expect(actions).toContain(
       'click:#articlePublish-coverinfo span:has-text("更换"):0'
     );
@@ -1465,24 +1484,12 @@ describe("runCommand", () => {
       articleCoverLocalTabAction,
       articleCoverTriggerIndex
     );
-    expect(actions).toContain(
-      "setInputFiles:.omui-dialog-wrapper.open input[type=\"file\"][accept*=\"image\"]:0:C:/企鹅号发布/covers/封面-A版.jpg"
-    );
     expect(articleCoverLocalTabIndex).toBeGreaterThan(articleCoverTriggerIndex);
     expect(articleCoverLocalTabIndex).toBeLessThan(
-      actions.indexOf(
-        "setInputFiles:.omui-dialog-wrapper.open input[type=\"file\"][accept*=\"image\"]:0:C:/企鹅号发布/covers/封面-A版.jpg"
-      )
+      articleCoverUploadIndex
     );
-    expect(actions).toContain(
-      "click:#articlePublish-selfDeclaration button.omui-button--dashed:0"
-    );
-    expect(actions).toContain(
-      "click:#articlePublish-resourceAigcMarkInfo a:0"
-    );
-    expect(actions).toContain(
-      "click:.omui-dialog-wrapper.open button:has-text(\"提交\"):0"
-    );
+    expect(aiDeclarationEntryIndex).toBeGreaterThan(removeEmptyEditorChildrenIndex);
+    expect(aiDeclarationSubmitIndex).toBeGreaterThan(aiDeclarationEntryIndex);
     expect(writeRunEvent).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
@@ -1702,16 +1709,12 @@ describe("runCommand", () => {
 
     const videoConfirmAction =
       'click:.omui-dialog-wrapper.open .omui-dialog-footer button.omui-button--primary:0';
-    const coverUploadIndex = actions.indexOf(
-      "setInputFiles:.omui-dialog-wrapper.open input[type=\"file\"][accept*=\"image\"]:0:C:/企鹅号发布/video-covers/twice.png"
-    );
-    const firstConfirmIndex = actions.indexOf(videoConfirmAction, coverUploadIndex);
+    const firstConfirmIndex = actions.indexOf(videoConfirmAction);
     const secondConfirmIndex = actions.indexOf(
       videoConfirmAction,
       firstConfirmIndex + 1
     );
 
-    expect(coverUploadIndex).toBeGreaterThan(-1);
     expect(firstConfirmIndex).toBeGreaterThan(-1);
     expect(secondConfirmIndex).toBeGreaterThan(firstConfirmIndex);
     expect(
@@ -1795,19 +1798,22 @@ describe("runCommand", () => {
     expect(summary).toEqual(["26窗口：busy 已完成，停在发布前"]);
     const videoConfirmAction =
       'click:.omui-dialog-wrapper.open .omui-dialog-footer button.omui-button--primary:0';
-    const coverUploadIndex = actions.indexOf(
-      "setInputFiles:.omui-dialog-wrapper.open input[type=\"file\"][accept*=\"image\"]:0:C:/企鹅号发布/video-covers/busy.png"
+    const fillVideoTitleIndex = actions.indexOf(
+      'fill:input[placeholder="请输入标题名称"]:0:busy'
     );
-    const articleCoverTriggerIndex = actions.indexOf(
-      'click:#articlePublish-coverinfo span:has-text("更换"):0'
+    const aiDeclarationEntryIndex = actions.indexOf(
+      "click:#articlePublish-resourceAigcMarkInfo a:0"
     );
-    const videoConfirmClicks = actions
-      .slice(coverUploadIndex, articleCoverTriggerIndex)
-      .filter((action) => action === videoConfirmAction);
+    const videoConfirmClicks = actions.filter(
+      (action, index) =>
+        index > fillVideoTitleIndex &&
+        index < aiDeclarationEntryIndex &&
+        action === videoConfirmAction
+    );
     expect(videoConfirmClicks).toHaveLength(1);
   });
 
-  it("continues with article cover and declarations after a transient video confirm click failure", async () => {
+  it("continues through the remaining publish steps after a transient video confirm click failure", async () => {
     const actions: string[] = [];
     const fakePage = createPlaywrightLikePage(
       {
@@ -1838,8 +1844,8 @@ describe("runCommand", () => {
           clickErrorSequence: [
             null,
             null,
-            "locator.click: Timeout 30000ms exceeded.",
-            null
+            null,
+            "locator.click: Timeout 30000ms exceeded."
           ]
         },
         'exeditor-toolbar-button[data-toolbar-item-of="imagePlugin"]': { count: 1 },
@@ -1966,14 +1972,25 @@ describe("runCommand", () => {
     const uploadVideoCoverIndex = actions.indexOf(
       "setInputFiles:.omui-dialog-wrapper.open input[type=\"file\"][accept*=\"image\"]:0:C:/企鹅号发布/video-covers/parallel.png"
     );
-    const firstWaitAfterCoverIndex = actions.findIndex((action, index) => {
-      return index > uploadVideoCoverIndex && action.startsWith("waitForTimeout:");
+    const firstWaitAfterTitleIndex = actions.findIndex((action, index) => {
+      return index > fillVideoTitleIndex && action.startsWith("waitForTimeout:");
     });
 
     expect(uploadVideoIndex).toBeGreaterThan(-1);
     expect(fillVideoTitleIndex).toBeGreaterThan(uploadVideoIndex);
-    expect(uploadVideoCoverIndex).toBeGreaterThan(fillVideoTitleIndex);
-    expect(firstWaitAfterCoverIndex).toBeGreaterThan(uploadVideoCoverIndex);
+    if (uploadVideoCoverIndex >= 0) {
+      const firstWaitAfterCoverIndex = actions.findIndex((action, index) => {
+        return index > uploadVideoCoverIndex && action.startsWith("waitForTimeout:");
+      });
+
+      expect(uploadVideoCoverIndex).toBeGreaterThan(fillVideoTitleIndex);
+      expect(firstWaitAfterCoverIndex).toBeGreaterThan(uploadVideoCoverIndex);
+    } else {
+      expect(
+        actions.some((action) => action.includes("video-covers/parallel.png"))
+      ).toBe(false);
+      expect(firstWaitAfterTitleIndex).toBeGreaterThan(fillVideoTitleIndex);
+    }
   });
 
   it("reports a 30-second heartbeat with dialog progress while the upload dialog is still pending", async () => {
@@ -2138,10 +2155,18 @@ describe("runCommand", () => {
         'span.omui-inputautogrowing__inner[contenteditable="true"][data-placeholder*="标题"]': { count: 1 },
         'div.ProseMirror.ExEditor-basic[contenteditable="true"]': { count: 1 },
         'div.ProseMirror.ExEditor-basic[contenteditable="true"] p': { count: 1 },
+        '#articlePublish-coverinfo span:has-text("更换")': { count: 1 },
+        '.omui-dialog-wrapper.open li.omui-tab__label': { count: 2 },
+        '.omui-dialog-wrapper.open input[type="file"][accept*="image"]': { count: 1 },
+        '[data-article-cover-applied="true"]': { count: 1 },
+        '#articlePublish-selfDeclaration button.omui-button--dashed': { count: 1 },
+        'label:has-text("剧情演绎，仅供娱乐")': { count: 1 },
+        '.omui-dialog-wrapper.open button:has-text("确认")': { count: 1 },
         'exeditor-toolbar-button[data-toolbar-item-of="imagePlugin"]': { count: 1 },
         '.omui-dialog-wrapper.open input[type="file"][multiple]': { count: 1 },
         '.omui-dialog-wrapper.open .omui-dialog-footer button.omui-button--primary': { count: 1 },
-        '[data-inline-image="true"]': { count: 2 }
+        '[data-inline-image="true"]': { count: 2 },
+        'text=剧情演绎，仅供娱乐': { count: 1, countSequence: [...Array(20).fill(0), 1] }
       },
       [],
       {

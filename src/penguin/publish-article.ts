@@ -96,6 +96,8 @@ async function buildDraft(
   await page.ensureLoggedIn?.();
   await page.resetDraft();
   await page.fillTitle(title);
+  await page.setArticleCover(articleCoverPath);
+  await page.applyDeclaration();
   await page.focusEditorBody();
   await page.insertArticleImages(articleImagePaths);
   await page.moveEditorCursorToStart();
@@ -109,10 +111,8 @@ async function buildDraft(
     "视频标题和封面已设置，正在等待上传完成；等待期间不要结束任务"
   );
   await page.ensureVideoReady(videoTitle, videoCoverPath);
-  await reportProgress?.("视频已插入正文，继续处理文章封面和声明");
+  await reportProgress?.("视频已插入正文，继续处理AI声明");
   await page.removeEmptyContentBlocks?.();
-  await page.setArticleCover(articleCoverPath);
-  await page.applyDeclaration();
   await page.applyAiDeclaration();
 }
 
