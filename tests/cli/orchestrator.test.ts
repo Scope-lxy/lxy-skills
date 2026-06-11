@@ -475,7 +475,7 @@ function createPlaywrightLikePage(
 
         if (
           options.publishSuccessUrl &&
-          (selector === 'role:button:/发布/u' ||
+          (selector === "role:button:发布" ||
             selector === 'button:has-text("发布")' ||
             selector === '[role="button"]:has-text("发布")')
         ) {
@@ -630,7 +630,10 @@ function createPlaywrightLikePage(
           atStart
         };
       },
-      getByRole(role: string, options?: { name?: string | RegExp }) {
+      getByRole(
+        role: string,
+        options?: { name?: string | RegExp; exact?: boolean }
+      ) {
         return createLocator(`role:${role}:${String(options?.name ?? "")}`);
       }
     }
@@ -1566,7 +1569,7 @@ describe("runCommand", () => {
     });
 
     expect(summary).toEqual(["18窗口：auto 已自动发布"]);
-    expect(actions).toContain("click:role:button:/发布/u:0");
+    expect(actions).toContain("click:role:button:发布:0");
   });
 
   it("fails auto publish when the page still stays on the publish URL after clicking publish", async () => {
@@ -1633,7 +1636,7 @@ describe("runCommand", () => {
     });
 
     expect(summary[0]).toContain("点击发布后仍停留在发布页，未确认发布成功");
-    expect(actions).toContain("click:role:button:/发布/u:0");
+    expect(actions).toContain("click:role:button:发布:0");
     expect(writeRunEvent).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
@@ -2806,7 +2809,7 @@ describe("runCommand", () => {
     expect(actions).toContain(
       "setInputFiles:.omui-dialog-wrapper.open input[type=\"file\"][accept*=\"image\"]:0:C:/企鹅号发布/covers/封面-A版.jpg"
     );
-    expect(actions).not.toContain("click:role:button:/发布/u:0");
+    expect(actions).not.toContain("click:role:button:发布:0");
   });
 
   it("corrects a mismatched actual title value before the final publish check", async () => {
@@ -2885,7 +2888,7 @@ describe("runCommand", () => {
     expect(fakePage.actions).toContain(
       'fill:input[placeholder*="标题"]:0:正确标题'
     );
-    expect(fakePage.actions).not.toContain("click:role:button:/发布/u:0");
+    expect(fakePage.actions).not.toContain("click:role:button:发布:0");
   });
 });
 
@@ -2953,6 +2956,8 @@ describe("runCli", () => {
     }));
     vi.doMock("../../src/logs/run-logger.js", () => ({
       buildLogFilePath: () => "C:/企鹅号发布/logs/run.jsonl",
+      buildProgressLogFilePath: () => "C:/企鹅号发布/logs/run.progress.log",
+      appendRunLogLine: async () => undefined,
       writeRunEvent: async () => undefined
     }));
     vi.doMock("../../src/penguin/publish-article.js", () => ({
@@ -3016,6 +3021,8 @@ describe("runCli", () => {
     }));
     vi.doMock("../../src/logs/run-logger.js", () => ({
       buildLogFilePath: () => "C:/企鹅号发布/logs/run.jsonl",
+      buildProgressLogFilePath: () => "C:/企鹅号发布/logs/run.progress.log",
+      appendRunLogLine: async () => undefined,
       writeRunEvent: async () => undefined
     }));
     vi.doMock("../../src/penguin/publish-article.js", () => ({
@@ -3110,6 +3117,8 @@ describe("runCli", () => {
     }));
     vi.doMock("../../src/logs/run-logger.js", () => ({
       buildLogFilePath: () => "C:/企鹅号发布/logs/run.jsonl",
+      buildProgressLogFilePath: () => "C:/企鹅号发布/logs/run.progress.log",
+      appendRunLogLine: async () => undefined,
       writeRunEvent: async () => undefined
     }));
     vi.doMock("../../src/penguin/publish-article.js", () => ({
@@ -3167,6 +3176,8 @@ describe("runCli", () => {
     }));
     vi.doMock("../../src/logs/run-logger.js", () => ({
       buildLogFilePath: () => "C:/企鹅号发布/logs/run.jsonl",
+      buildProgressLogFilePath: () => "C:/企鹅号发布/logs/run.progress.log",
+      appendRunLogLine: async () => undefined,
       writeRunEvent: async () => undefined
     }));
     vi.doMock("../../src/penguin/publish-article.js", () => ({
@@ -3227,6 +3238,8 @@ describe("runCli", () => {
     }));
     vi.doMock("../../src/logs/run-logger.js", () => ({
       buildLogFilePath: () => "C:/企鹅号发布/logs/run.jsonl",
+      buildProgressLogFilePath: () => "C:/企鹅号发布/logs/run.progress.log",
+      appendRunLogLine: async () => undefined,
       writeRunEvent: async () => undefined
     }));
     vi.doMock("../../src/penguin/publish-article.js", () => ({

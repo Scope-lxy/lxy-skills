@@ -15,7 +15,12 @@ import { parsePublishCommand } from "./command/parse-publish-command.js";
 import { loadConfig } from "./config/load-config.js";
 import { saveConfig } from "./config/save-config.js";
 import { openProfile, type OpenProfileResult } from "./ixbrowser/open-profile.js";
-import { buildLogFilePath, writeRunEvent } from "./logs/run-logger.js";
+import {
+  appendRunLogLine,
+  buildLogFilePath,
+  buildProgressLogFilePath,
+  writeRunEvent
+} from "./logs/run-logger.js";
 import {
   publishArticle,
   type PublishArticleInput,
@@ -43,6 +48,13 @@ interface PublishProgressUpdate {
   profileId: number;
   title: string;
   message: string;
+}
+
+interface WindowCompleteUpdate {
+  index: number;
+  total: number;
+  result: WindowRunResult;
+  summary: string;
 }
 
 type ProgressReporter = (message: string) => Promise<void> | void;
@@ -83,6 +95,7 @@ interface PlaywrightPageLike {
     role: string,
     options?: {
       name?: string | RegExp;
+      exact?: boolean;
     }
   ): PlaywrightLocatorLike;
 }
@@ -349,6 +362,7 @@ export interface RunCommandDependencies {
   connectBrowser: (endpoint: string) => Promise<BrowserLike>;
   publishArticle: PublishArticleDependency;
   writeRunEvent: typeof writeRunEvent;
+  appendRunLogLine: typeof appendRunLogLine;
   acquirePublishRunLock: (
     assetsRoot: string,
     command: string
@@ -356,11 +370,15 @@ export interface RunCommandDependencies {
   reportProgress: (
     update: PublishProgressUpdate
   ) => Promise<void> | void;
+  reportWindowComplete: (
+    update: WindowCompleteUpdate
+  ) => Promise<void> | void;
 }
 
 export interface RunCommandReport {
   summaries: string[];
   results: WindowRunResult[];
+  overallSummaryLines: string[];
 }
 
 function formatErrorMessage(error: unknown): string {
@@ -2664,7 +2682,7 @@ export function createPlaywrightPageAdapter(
       const initialUrl = await readCurrentUrlIfPossible(page);
 
       if (page.getByRole) {
-        await page.getByRole("button", { name: /发布/u }).click();
+        await page.getByRole("button", { name: "发布", exact: true }).click();
         await waitForUiTick(page);
         await waitForPublishSuccessNavigation(page, initialUrl);
         return;
@@ -2718,6 +2736,16 @@ function formatSummary(result: WindowRunResult): string {
   return `${result.profileId}窗口：${result.title} ${result.message}`;
 }
 
+function formatOverallSummary(results: readonly WindowRunResult[]): string[] {
+  const successCount = results.filter((result) => result.status !== "failed").length;
+  const failedCount = results.length - successCount;
+
+  return [
+    `本次发布完成：共 ${results.length} 个窗口，成功 ${successCount} 个，失败 ${failedCount} 个。`,
+    ...results.map((result) => formatSummary(result))
+  ];
+}
+
 function formatModeHint(mode: RuntimeConfig["mode"]): string {
   return mode === "auto-publish"
     ? "当前是正式模式，全自动发布，可切换到开发模式。"
@@ -2741,8 +2769,10 @@ const defaultDependencies: RunCommandDependencies = {
   connectBrowser: defaultConnectBrowser,
   publishArticle: runPublishArticle,
   writeRunEvent,
+  appendRunLogLine,
   acquirePublishRunLock: async () => async () => undefined,
-  reportProgress: async () => undefined
+  reportProgress: async () => undefined,
+  reportWindowComplete: async () => undefined
 };
 
 export async function runCommandReport(
@@ -2766,7 +2796,8 @@ export async function runCommandReport(
 
     return {
       summaries: [formatModeSwitchResult(parsedCommand.mode)],
-      results: []
+      results: [],
+      overallSummaryLines: []
     };
   }
 
@@ -2783,8 +2814,16 @@ export async function runCommandReport(
     );
     const coverDir = join(config.assetsRoot, "video-covers");
     const logFile = buildLogFilePath(join(config.assetsRoot, "logs"));
+    const progressLogFile = buildProgressLogFilePath(join(config.assetsRoot, "logs"));
     const summaries: string[] = [];
     const results: WindowRunResult[] = [];
+    const safeAppendProgressLine = async (line: string): Promise<void> => {
+      try {
+        await deps.appendRunLogLine(progressLogFile, line);
+      } catch {
+        // Ignore progress log failures so publishing can continue.
+      }
+    };
 
     for (const allocation of allocations) {
       let coverPath: string | null = null;
@@ -2826,6 +2865,8 @@ export async function runCommandReport(
           mode: config.mode,
           evidenceDir: join(config.assetsRoot, "logs"),
           reportProgress: async (message) => {
+            const progressLine = `${allocation.profileId}窗口：${allocation.title} ${message}`;
+            await safeAppendProgressLine(progressLine);
             await deps.reportProgress({
               profileId: allocation.profileId,
               title: allocation.title,
@@ -2899,13 +2940,28 @@ export async function runCommandReport(
         };
       }
 
-      summaries.push(formatSummary(result));
+      const summary = formatSummary(result);
+      summaries.push(summary);
       results.push(result);
+      await safeAppendProgressLine(summary);
+      await deps.reportWindowComplete({
+        index: results.length,
+        total: allocations.length,
+        result,
+        summary
+      });
+    }
+
+    const overallSummaryLines = formatOverallSummary(results);
+
+    for (const line of overallSummaryLines) {
+      await safeAppendProgressLine(line);
     }
 
     return {
       summaries,
-      results
+      results,
+      overallSummaryLines
     };
   } finally {
     if (releasePublishRunLock !== null) {
@@ -2935,20 +2991,24 @@ export async function runCli(
 
   try {
     const parsedCommand = parsePublishCommand(command);
-
-    if (parsedCommand.kind === "publish") {
-      const config = await loadConfig(DEFAULT_CONFIG_PATH);
-      console.log(formatModeHint(config.mode));
-    }
-
-    const report = await runCommandReport(command, {
+    const depsForCli: Partial<RunCommandDependencies> = {
       ...overrides,
       reportProgress: async ({ profileId, title, message }) => {
         console.log(`${profileId}窗口：${title} ${message}`);
+      },
+      reportWindowComplete: async ({ summary }) => {
+        console.log(summary);
       }
-    });
+    };
 
-    for (const summary of report.summaries) {
+    if (parsedCommand.kind === "publish") {
+      const config = await (depsForCli.loadConfig ?? loadConfig)(DEFAULT_CONFIG_PATH);
+      console.log(formatModeHint(config.mode));
+    }
+
+    const report = await runCommandReport(command, depsForCli);
+
+    for (const summary of report.overallSummaryLines) {
       console.log(summary);
     }
 

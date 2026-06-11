@@ -14,3 +14,16 @@ export function buildLogFilePath(logsDir: string): string {
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   return join(logsDir, `${timestamp}.jsonl`);
 }
+
+export async function appendRunLogLine(
+  logFile: string,
+  line: string
+): Promise<void> {
+  await mkdir(dirname(logFile), { recursive: true });
+  await appendFile(logFile, `${line}\n`, "utf8");
+}
+
+export function buildProgressLogFilePath(logsDir: string): string {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  return join(logsDir, `${timestamp}.progress.log`);
+}
