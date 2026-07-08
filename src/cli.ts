@@ -187,6 +187,8 @@ const DRAFT_RESTORE_WAIT_MS = 10000;
 const VIDEO_UPLOAD_HEARTBEAT_INTERVAL_MS = 30000;
 const VIDEO_UPLOAD_HEARTBEAT_BASE_MESSAGE = "继续等待，不要结束任务";
 const PUBLISH_SUCCESS_WAIT_ATTEMPTS = 40;
+const LOGIN_UNCONFIRMED_MESSAGE =
+  "当前窗口未登录，发布状态未确认；请先检查企鹅号后台是否已发出，确认未发出后再在 ixBrowser 对应窗口完成扫码登录并重试";
 
 const OPEN_DIALOG_SELECTORS = ['.omui-dialog-wrapper.open'] as const;
 const DIALOG_CLOSE_SELECTORS = [
@@ -268,8 +270,12 @@ const DECLARATION_TRIGGER_SELECTORS = [
 ] as const;
 
 const DECLARATION_OPTION_SELECTORS = [
+  'label:has-text("虚构演绎，仅供娱乐")',
+  'text=虚构演绎，仅供娱乐',
   'label:has-text("剧情演绎，仅供娱乐")',
-  'text=剧情演绎，仅供娱乐'
+  'text=剧情演绎，仅供娱乐',
+  'label:has-text("仅供娱乐")',
+  'text=仅供娱乐'
 ] as const;
 
 const DECLARATION_CONFIRM_SELECTORS = [
@@ -279,8 +285,12 @@ const DECLARATION_CONFIRM_SELECTORS = [
 ] as const;
 
 const DECLARATION_CONFIRMED_SELECTORS = [
+  'text=虚构演绎，仅供娱乐',
+  '[data-declaration-value="虚构演绎，仅供娱乐"]',
   'text=剧情演绎，仅供娱乐',
-  '[data-declaration-value="剧情演绎，仅供娱乐"]'
+  '[data-declaration-value="剧情演绎，仅供娱乐"]',
+  'text=仅供娱乐',
+  '[data-declaration-value*="仅供娱乐"]'
 ] as const;
 
 const AI_DECLARATION_PENDING_SELECTORS = [
@@ -745,6 +755,10 @@ function isPublishEditorUrl(url: string): boolean {
   return /\/article\/publish(?:[/?#]|$)/u.test(url);
 }
 
+function isLoginUrl(url: string): boolean {
+  return /om\.qq\.com\/userAuth\/index(?:[/?#]|$)/u.test(url);
+}
+
 function hasPublishSucceededByUrl(
   initialUrl: string | null,
   currentUrl: string | null
@@ -756,6 +770,10 @@ function hasPublishSucceededByUrl(
   const normalizedCurrentUrl = currentUrl.trim();
 
   if (isPublishEditorUrl(normalizedCurrentUrl)) {
+    return false;
+  }
+
+  if (isLoginUrl(normalizedCurrentUrl)) {
     return false;
   }
 
@@ -785,6 +803,12 @@ async function waitForPublishSuccessNavigation(
   }
 
   const currentUrl = await readCurrentUrlIfPossible(page);
+
+  if (typeof currentUrl === "string" && isLoginUrl(currentUrl)) {
+    throw new Error(
+      `点击发布后跳到登录页，发布状态未确认；请先检查企鹅号后台是否已发出，确认未发出后再登录重试（当前URL="${currentUrl}"）`
+    );
+  }
 
   if (typeof currentUrl === "string" && isPublishEditorUrl(currentUrl)) {
     throw new Error(`点击发布后仍停留在发布页，未确认发布成功（当前URL="${currentUrl}"）`);
@@ -2301,13 +2325,13 @@ export function createPlaywrightPageAdapter(
 
       if (
         typeof currentUrl === "string" &&
-        currentUrl.includes("om.qq.com/userAuth/index")
+        isLoginUrl(currentUrl)
       ) {
-        throw new Error("当前窗口未登录，请先在 ixBrowser 对应窗口完成扫码登录后重试");
+        throw new Error(LOGIN_UNCONFIRMED_MESSAGE);
       }
 
       if (await hasExplicitVisibleSignal(page, LOGIN_REQUIRED_SELECTORS)) {
-        throw new Error("当前窗口未登录，请先在 ixBrowser 对应窗口完成扫码登录后重试");
+        throw new Error(LOGIN_UNCONFIRMED_MESSAGE);
       }
     },
     async resetDraft() {
@@ -2597,7 +2621,7 @@ export function createPlaywrightPageAdapter(
       const option = await pickVisibleLocator(
         page,
         DECLARATION_OPTION_SELECTORS,
-        "剧情演绎，仅供娱乐选项"
+        "包含仅供娱乐的自主声明选项"
       );
       await option.click();
 

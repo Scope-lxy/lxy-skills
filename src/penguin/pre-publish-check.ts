@@ -54,7 +54,7 @@ export function validatePrePublishState(
   }
 
   if (!state?.declarationConfirmed) {
-    issues.push("自主声明未设置为剧情演绎，仅供娱乐");
+    issues.push("自主声明未设置为包含仅供娱乐的选项");
   }
 
   if (!state?.aiDeclarationConfirmed) {

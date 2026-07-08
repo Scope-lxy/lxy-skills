@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { access, mkdir, readdir, rename, stat } from "node:fs/promises";
+import { access, mkdir, readdir, rename } from "node:fs/promises";
 import { extname, join, parse } from "node:path";
 
 export interface AllocatedVideo {
@@ -8,35 +8,30 @@ export interface AllocatedVideo {
   title: string;
 }
 
+function shuffle<T>(items: readonly T[]): T[] {
+  const shuffled = [...items];
+
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const randomIndex = Math.floor(Math.random() * (index + 1));
+    [shuffled[index], shuffled[randomIndex]] = [
+      shuffled[randomIndex],
+      shuffled[index]
+    ];
+  }
+
+  return shuffled;
+}
+
 export async function allocateVideosForProfiles(
   videosDir: string,
   profileIds: number[]
 ): Promise<AllocatedVideo[]> {
-  const fileNames = (await readdir(videosDir, { withFileTypes: true }))
+  const files = shuffle(
+    (await readdir(videosDir, { withFileTypes: true }))
     .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".mp4"))
-    .map((entry) => entry.name);
-
-  const files = (
-    await Promise.all(
-      fileNames.map(async (fileName) => {
-        const filePath = join(videosDir, fileName);
-        const fileStats = await stat(filePath);
-
-        return {
-          fileName,
-          createdAtMs: fileStats.birthtimeMs
-        };
-      })
-    )
-  )
-    .sort((left, right) => {
-      if (left.createdAtMs !== right.createdAtMs) {
-        return left.createdAtMs - right.createdAtMs;
-      }
-
-      return left.fileName.localeCompare(right.fileName, "zh-CN");
-    })
-    .map((file) => file.fileName);
+      .map((entry) => entry.name)
+      .sort((left, right) => left.localeCompare(right, "zh-CN"))
+  );
 
   if (files.length < profileIds.length) {
     throw new Error("可用视频数量不足");

@@ -119,7 +119,7 @@ describe("validatePrePublishState", () => {
         insertedImageCount: 2
       })
     ).toEqual([
-      "自主声明未设置为剧情演绎，仅供娱乐",
+      "自主声明未设置为包含仅供娱乐的选项",
       "AI生成声明未提交",
       "文章封面状态缺失",
       "文章封面未设置完成"
@@ -159,7 +159,7 @@ describe("validatePrePublishState", () => {
       "视频未上传完成",
       "视频封面未设置完成",
       "文章配图数量必须为 2 张",
-      "自主声明未设置为剧情演绎，仅供娱乐",
+      "自主声明未设置为包含仅供娱乐的选项",
       "AI生成声明未提交",
       "文章封面未设置完成"
     ]);
@@ -449,7 +449,7 @@ describe("publishArticle", () => {
     const page = createFakePage(actions);
     page.ensureLoggedIn = async () => {
       actions.push("ensureLoggedIn");
-      throw new Error("当前窗口未登录，请先在 ixBrowser 对应窗口完成扫码登录后重试");
+      throw new Error("当前窗口未登录，发布状态未确认；请先检查企鹅号后台是否已发出，确认未发出后再在 ixBrowser 对应窗口完成扫码登录并重试");
     };
 
     await expect(
@@ -467,7 +467,7 @@ describe("publishArticle", () => {
         mode: "pause-before-publish",
         evidenceDir: "C:/企鹅号发布/logs"
       })
-    ).rejects.toThrow("当前窗口未登录，请先在 ixBrowser 对应窗口完成扫码登录后重试");
+    ).rejects.toThrow("当前窗口未登录，发布状态未确认");
 
     expect(actions).toEqual([
       "goto:https://om.qq.com/article/publish:domcontentloaded",

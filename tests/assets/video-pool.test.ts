@@ -2,6 +2,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   writeFileSync
 } from "node:fs";
@@ -35,15 +36,16 @@ describe("allocateVideosForProfiles", () => {
     ]);
   });
 
-  it("allocates older videos before newer videos", async () => {
+  it("allocates videos in random order", async () => {
     const dir = mkdtempSync(join(tmpdir(), "qq-videos-"));
-    writeFileSync(join(dir, "z-old.mp4"), "");
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    writeFileSync(join(dir, "a-new.mp4"), "");
+    writeFileSync(join(dir, "a.mp4"), "");
+    writeFileSync(join(dir, "b.mp4"), "");
+    writeFileSync(join(dir, "c.mp4"), "");
+    vi.spyOn(Math, "random").mockReturnValueOnce(0).mockReturnValueOnce(0);
 
     const allocation = await allocateVideosForProfiles(dir, [1, 2]);
 
-    expect(allocation.map((item) => item.title)).toEqual(["z-old", "a-new"]);
+    expect(allocation.map((item) => item.title)).toEqual(["b", "c"]);
   });
 
   it("fails when there are not enough videos for the requested windows", async () => {
@@ -236,13 +238,11 @@ describe("pickArticleAssetSet", () => {
     writeFileSync(join(groupBDir, "图2.jpg"), "");
     writeFileSync(join(groupBDir, "封面.jpg"), "");
 
-    vi.spyOn(Math, "random").mockReturnValue(0.75);
-
     await expect(pickArticleAssetSet(picturesDir, coversDir)).resolves.toEqual({
-      picture1Path: join(groupBDir, "图1.jpg"),
-      picture2Path: join(groupBDir, "图2.jpg"),
-      articleCoverPath: join(groupBDir, "封面.jpg"),
-      version: "B组",
+      picture1Path: join(groupADir, "图1.jpg"),
+      picture2Path: join(groupADir, "图2.jpg"),
+      articleCoverPath: join(groupADir, "封面.jpg"),
+      version: "A组",
       selectionMode: "grouped-directory"
     });
   });
@@ -300,6 +300,96 @@ describe("pickArticleAssetSet", () => {
     await expect(pickArticleAssetSet(picturesDir, coversDir)).rejects.toThrow(
       "pictures 目录缺少完整文章素材组"
     );
+  });
+
+  it("starts from the next complete group after the last used group", async () => {
+    const picturesDir = mkdtempSync(join(tmpdir(), "qq-pictures-"));
+    const coversDir = mkdtempSync(join(tmpdir(), "qq-article-covers-"));
+    const groupADir = join(picturesDir, "A组");
+    const groupBDir = join(picturesDir, "B组");
+    const groupCDir = join(picturesDir, "C组");
+    mkdirSync(groupADir);
+    mkdirSync(groupBDir);
+    mkdirSync(groupCDir);
+    writeFileSync(join(groupADir, "图1.jpg"), "");
+    writeFileSync(join(groupADir, "图2.jpg"), "");
+    writeFileSync(join(groupADir, "封面.jpg"), "");
+    writeFileSync(join(groupBDir, "图1.jpg"), "");
+    writeFileSync(join(groupBDir, "图2.jpg"), "");
+    writeFileSync(join(groupBDir, "封面.jpg"), "");
+    writeFileSync(join(groupCDir, "图1.jpg"), "");
+    writeFileSync(join(groupCDir, "图2.jpg"), "");
+    writeFileSync(join(groupCDir, "封面.jpg"), "");
+    writeFileSync(
+      join(picturesDir, ".last-article-asset-group.json"),
+      JSON.stringify({ lastGroupName: "A组" }, null, 2),
+      "utf8"
+    );
+
+    await expect(pickArticleAssetSet(picturesDir, coversDir)).resolves.toEqual({
+      picture1Path: join(groupBDir, "图1.jpg"),
+      picture2Path: join(groupBDir, "图2.jpg"),
+      articleCoverPath: join(groupBDir, "封面.jpg"),
+      version: "B组",
+      selectionMode: "grouped-directory"
+    });
+
+    expect(
+      JSON.parse(
+        readFileSync(join(picturesDir, ".last-article-asset-group.json"), "utf8")
+      )
+    ).toEqual({ lastGroupName: "B组" });
+  });
+
+  it("wraps back to the first complete group after the last one", async () => {
+    const picturesDir = mkdtempSync(join(tmpdir(), "qq-pictures-"));
+    const coversDir = mkdtempSync(join(tmpdir(), "qq-article-covers-"));
+    const groupADir = join(picturesDir, "A组");
+    const groupBDir = join(picturesDir, "B组");
+    mkdirSync(groupADir);
+    mkdirSync(groupBDir);
+    writeFileSync(join(groupADir, "图1.jpg"), "");
+    writeFileSync(join(groupADir, "图2.jpg"), "");
+    writeFileSync(join(groupADir, "封面.jpg"), "");
+    writeFileSync(join(groupBDir, "图1.jpg"), "");
+    writeFileSync(join(groupBDir, "图2.jpg"), "");
+    writeFileSync(join(groupBDir, "封面.jpg"), "");
+    writeFileSync(
+      join(picturesDir, ".last-article-asset-group.json"),
+      JSON.stringify({ lastGroupName: "B组" }, null, 2),
+      "utf8"
+    );
+
+    await expect(pickArticleAssetSet(picturesDir, coversDir)).resolves.toEqual({
+      picture1Path: join(groupADir, "图1.jpg"),
+      picture2Path: join(groupADir, "图2.jpg"),
+      articleCoverPath: join(groupADir, "封面.jpg"),
+      version: "A组",
+      selectionMode: "grouped-directory"
+    });
+  });
+
+  it("keeps using the only complete group when there is just one", async () => {
+    const picturesDir = mkdtempSync(join(tmpdir(), "qq-pictures-"));
+    const coversDir = mkdtempSync(join(tmpdir(), "qq-article-covers-"));
+    const groupDir = join(picturesDir, "配图1组");
+    mkdirSync(groupDir);
+    writeFileSync(join(groupDir, "图1.jpg"), "");
+    writeFileSync(join(groupDir, "图2.jpg"), "");
+    writeFileSync(join(groupDir, "封面.jpg"), "");
+
+    const first = await pickArticleAssetSet(picturesDir, coversDir);
+    const second = await pickArticleAssetSet(picturesDir, coversDir);
+
+    expect(first).toEqual({
+      picture1Path: join(groupDir, "图1.jpg"),
+      picture2Path: join(groupDir, "图2.jpg"),
+      articleCoverPath: join(groupDir, "封面.jpg"),
+      version: "配图1组",
+      selectionMode: "grouped-directory"
+    });
+    expect(second).toEqual(first);
+    expect(readdirSync(picturesDir)).toContain(".last-article-asset-group.json");
   });
 });
 

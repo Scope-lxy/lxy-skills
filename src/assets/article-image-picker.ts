@@ -1,7 +1,8 @@
-import { readdir } from "node:fs/promises";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join, parse } from "node:path";
 
 const IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".webp"]);
+const LAST_USED_GROUP_STATE_FILE = ".last-article-asset-group.json";
 
 type ArticleAssetRole = "picture1" | "picture2" | "cover";
 export type ArticleAssetSelectionMode =
@@ -28,10 +29,6 @@ export interface PickedArticleAssetSet {
   articleCoverPath: string;
   version: null | string;
   selectionMode: ArticleAssetSelectionMode;
-}
-
-function pickRandom<T>(items: readonly T[]): T {
-  return items[Math.floor(Math.random() * items.length)];
 }
 
 function isSupportedImage(fileName: string): boolean {
@@ -138,7 +135,57 @@ function pickRole(
   const matches = candidates.filter((candidate) => candidate.role === role);
   const bestPriority = Math.min(...matches.map((candidate) => candidate.priority));
   const preferredMatches = matches.filter((candidate) => candidate.priority === bestPriority);
-  return pickRandom(preferredMatches);
+  return preferredMatches[Math.floor(Math.random() * preferredMatches.length)];
+}
+
+function buildLastUsedGroupStatePath(picturesDir: string): string {
+  return join(picturesDir, LAST_USED_GROUP_STATE_FILE);
+}
+
+async function readLastUsedGroupName(picturesDir: string): Promise<string | null> {
+  try {
+    const raw = await readFile(buildLastUsedGroupStatePath(picturesDir), "utf8");
+    const parsed = JSON.parse(raw) as { lastGroupName?: unknown };
+    return typeof parsed.lastGroupName === "string" && parsed.lastGroupName.length > 0
+      ? parsed.lastGroupName
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeLastUsedGroupName(
+  picturesDir: string,
+  groupName: string
+): Promise<void> {
+  await writeFile(
+    buildLastUsedGroupStatePath(picturesDir),
+    JSON.stringify({ lastGroupName: groupName }, null, 2),
+    "utf8"
+  );
+}
+
+function pickNextGroup(
+  completeGroups: readonly ArticleAssetGroup[],
+  lastGroupName: string | null
+): ArticleAssetGroup {
+  if (completeGroups.length === 1) {
+    return completeGroups[0];
+  }
+
+  if (lastGroupName === null) {
+    return completeGroups[0];
+  }
+
+  const lastGroupIndex = completeGroups.findIndex(
+    (group) => group.groupName === lastGroupName
+  );
+
+  if (lastGroupIndex === -1) {
+    return completeGroups[0];
+  }
+
+  return completeGroups[(lastGroupIndex + 1) % completeGroups.length];
 }
 
 export async function pickArticleAssetSet(
@@ -158,7 +205,9 @@ export async function pickArticleAssetSet(
     throw new Error("pictures 目录缺少完整文章素材组");
   }
 
-  const group = pickRandom(completeGroups);
+  const lastGroupName = await readLastUsedGroupName(picturesDir);
+  const group = pickNextGroup(completeGroups, lastGroupName);
+  await writeLastUsedGroupName(picturesDir, group.groupName);
 
   return {
     picture1Path: pickRole(group.candidates, "picture1").filePath,
