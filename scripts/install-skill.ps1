@@ -19,7 +19,7 @@ switch ($TargetHost) {
   "all" {
     $targets = @(
       @{ Name = "claude"; Path = Join-Path $env:USERPROFILE ".claude\skills\$skillName" },
-      @{ Name = "openclaw"; Path = Join-Path $env:USERPROFILE ".openclaw-autoclaw\skills\$skillName" },
+      @{ Name = "openclaw"; Path = Join-Path $env:USERPROFILE ".openclaw\skills\$skillName" },
       @{ Name = "codex"; Path = Join-Path $env:USERPROFILE ".agents\skills\$skillName" }
     )
   }
@@ -30,7 +30,7 @@ switch ($TargetHost) {
   }
   "openclaw" {
     $targets = @(
-      @{ Name = "openclaw"; Path = Join-Path $env:USERPROFILE ".openclaw-autoclaw\skills\$skillName" }
+      @{ Name = "openclaw"; Path = Join-Path $env:USERPROFILE ".openclaw\skills\$skillName" }
     )
   }
   "codex" {
