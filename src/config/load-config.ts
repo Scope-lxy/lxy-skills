@@ -1,9 +1,5 @@
 import { readFile } from "node:fs/promises";
-import type { PublishMode, RuntimeConfig } from "./types.js";
-
-function isPublishMode(value: string): value is PublishMode {
-  return value === "pause-before-publish" || value === "auto-publish";
-}
+import type { RuntimeConfig } from "./types.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -29,14 +25,9 @@ export async function loadConfig(filePath: string): Promise<RuntimeConfig> {
     throw new Error("assetsRoot 必须是字符串");
   }
 
-  if (typeof parsed.mode !== "string" || !isPublishMode(parsed.mode)) {
-    throw new Error("mode 必须是 pause-before-publish 或 auto-publish");
-  }
-
   return {
     ixBrowserApiBaseUrl: parsed.ixBrowserApiBaseUrl,
     penguinPublishUrl: parsed.penguinPublishUrl,
-    assetsRoot: parsed.assetsRoot,
-    mode: parsed.mode
+    assetsRoot: parsed.assetsRoot
   };
 }

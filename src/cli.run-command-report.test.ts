@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 import {
   runCommandReport,
   type BrowserLike,
@@ -6,12 +6,11 @@ import {
 } from "./cli.js";
 import type { RuntimeConfig } from "./config/types.js";
 
-function createTestConfig(mode: RuntimeConfig["mode"] = "auto-publish"): RuntimeConfig {
+function createTestConfig(): RuntimeConfig {
   return {
     ixBrowserApiBaseUrl: "http://127.0.0.1:53200",
     penguinPublishUrl: "https://om.qq.com/main/creation/article",
-    assetsRoot: "C:/Users/LXYou/Desktop/企鹅号发布",
-    mode
+    assetsRoot: "C:/Users/LXYou/Desktop/企鹅号发布"
   };
 }
 
@@ -45,9 +44,6 @@ describe("runCommandReport", () => {
     const report = await runCommandReport("发视频 1-2", {
       async loadConfig() {
         return createTestConfig();
-      },
-      async saveConfig() {
-        return undefined;
       },
       async allocateVideosForProfiles() {
         return [
@@ -90,8 +86,8 @@ describe("runCommandReport", () => {
 
         if (publishCallCount === 1) {
           return {
-            status: "published",
-            message: "已自动发布"
+            status: "draft-saved",
+            message: "已存草稿"
           };
         }
 
@@ -115,24 +111,24 @@ describe("runCommandReport", () => {
     } satisfies Partial<RunCommandDependencies>);
 
     expect(completionSummaries).toEqual([
-      "1窗口：标题1 已自动发布",
+      "1窗口：标题1 已存草稿",
       "2窗口：标题2 发布失败"
     ]);
     expect(report.overallSummaryLines).toEqual([
       "本次发布完成：共 2 个窗口，成功 1 个，失败 1 个。",
-      "1窗口：标题1 已自动发布",
+      "1窗口：标题1 已存草稿",
       "2窗口：标题2 发布失败"
     ]);
-    expect(writtenResults).toEqual(["1:已自动发布", "2:发布失败"]);
+    expect(writtenResults).toEqual(["1:已存草稿", "2:发布失败"]);
     expect(progressLines).toEqual([
       "1窗口：标题1 阶段1",
       "1窗口：标题1 阶段1",
-      "1窗口：标题1 已自动发布",
+      "1窗口：标题1 已存草稿",
       "2窗口：标题2 阶段2",
       "2窗口：标题2 阶段2",
       "2窗口：标题2 发布失败",
       "本次发布完成：共 2 个窗口，成功 1 个，失败 1 个。",
-      "1窗口：标题1 已自动发布",
+      "1窗口：标题1 已存草稿",
       "2窗口：标题2 发布失败"
     ]);
   });

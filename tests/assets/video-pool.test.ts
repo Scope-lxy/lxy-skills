@@ -1,4 +1,4 @@
-import {
+﻿import {
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -406,8 +406,8 @@ describe("run logger", () => {
       title: "你好🥺",
       videoPath: "C:/企鹅号发布/videos/你好🥺.mp4",
       coverPath: "C:/企鹅号发布/video-covers/cover-a.jpg",
-      status: "ready-to-publish",
-      message: "已停在发布前"
+      status: "draft-saved",
+      message: "已存草稿"
     });
 
     const fileContent = readFileSync(logFile, "utf8");
@@ -419,8 +419,8 @@ describe("run logger", () => {
       title: "你好🥺",
       videoPath: "C:/企鹅号发布/videos/你好🥺.mp4",
       coverPath: "C:/企鹅号发布/video-covers/cover-a.jpg",
-      status: "ready-to-publish",
-      message: "已停在发布前"
+      status: "draft-saved",
+      message: "已存草稿"
     });
   });
 });

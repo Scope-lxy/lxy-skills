@@ -1,4 +1,3 @@
-import type { PublishMode } from "../config/types.js";
 import {
   validatePrePublishReviewState,
   type PenguinPrePublishStateInput
@@ -33,7 +32,8 @@ export interface PenguinPublishPageLike {
     label: string,
     evidenceDir: string
   ): Promise<string | null>;
-  clickPublish(): Promise<void>;
+  saveDraft(): Promise<void>;
+  confirmSavedDraft(title: string): Promise<void>;
 }
 
 export interface PublishArticleInput {
@@ -44,23 +44,18 @@ export interface PublishArticleInput {
   videoCoverPath: string;
   articleImagePaths: readonly [string, string];
   articleCoverPath: string;
-  mode: PublishMode;
   evidenceDir?: string;
   reportProgress?: (message: string) => Promise<void> | void;
 }
 
 export interface PublishArticleResult {
-  status: "ready-to-publish" | "published";
+  status: "draft-saved";
   message: string;
 }
 
 const MAX_VIDEO_TITLE_LENGTH = 32;
 const MAX_REBUILD_ATTEMPTS = 2;
 const TITLE_MISMATCH_ISSUE = "标题与目标不一致";
-
-function assertNever(value: never): never {
-  throw new Error(`不支持的发布模式: "${String(value)}"`);
-}
 
 export function toVideoPublishTitle(
   articleTitle: string,
@@ -116,26 +111,17 @@ async function buildDraft(
   await page.applyAiDeclaration();
 }
 
-async function finishPublish(
+async function saveDraft(
   page: PenguinPublishPageLike,
-  mode: PublishMode
+  title: string
 ): Promise<PublishArticleResult> {
-  switch (mode) {
-    case "pause-before-publish":
-      return {
-        status: "ready-to-publish",
-        message: "已完成，停在发布前"
-      };
-    case "auto-publish":
-      await page.clickPublish();
+  await page.saveDraft();
+  await page.confirmSavedDraft(title);
 
-      return {
-        status: "published",
-        message: "已自动发布"
-      };
-    default:
-      return assertNever(mode);
-  }
+  return {
+    status: "draft-saved",
+    message: "已存草稿"
+  };
 }
 
 async function correctTitleAndRecheck(
@@ -160,7 +146,6 @@ export async function publishArticle(
     videoCoverPath,
     articleImagePaths,
     articleCoverPath,
-    mode,
     evidenceDir,
     reportProgress
   } = input;
@@ -186,7 +171,7 @@ export async function publishArticle(
     });
 
     if (issues.length === 0) {
-      return finishPublish(page, mode);
+      return saveDraft(page, title);
     }
 
     if (issues.includes(TITLE_MISMATCH_ISSUE)) {
@@ -194,7 +179,7 @@ export async function publishArticle(
 
       if (!correctedIssues.includes(TITLE_MISMATCH_ISSUE)) {
         if (correctedIssues.length === 0) {
-          return finishPublish(page, mode);
+          return saveDraft(page, title);
         }
 
         lastIssues = correctedIssues;

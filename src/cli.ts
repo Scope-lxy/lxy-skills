@@ -13,7 +13,6 @@ import {
 import { pickRandomCover } from "./assets/cover-picker.js";
 import { parsePublishCommand } from "./command/parse-publish-command.js";
 import { loadConfig } from "./config/load-config.js";
-import { saveConfig } from "./config/save-config.js";
 import { openProfile, type OpenProfileResult } from "./ixbrowser/open-profile.js";
 import {
   appendRunLogLine,
@@ -95,6 +94,12 @@ interface PlaywrightPageLike {
     role: string,
     options?: {
       name?: string | RegExp;
+      exact?: boolean;
+    }
+  ): PlaywrightLocatorLike;
+  getByText?(
+    text: string,
+    options?: {
       exact?: boolean;
     }
   ): PlaywrightLocatorLike;
@@ -186,7 +191,10 @@ const UI_TICK_MS = 500;
 const DRAFT_RESTORE_WAIT_MS = 10000;
 const VIDEO_UPLOAD_HEARTBEAT_INTERVAL_MS = 30000;
 const VIDEO_UPLOAD_HEARTBEAT_BASE_MESSAGE = "继续等待，不要结束任务";
-const PUBLISH_SUCCESS_WAIT_ATTEMPTS = 40;
+const DRAFT_SAVE_CONFIRM_ATTEMPTS = 20;
+const DRAFT_MANAGEMENT_SETTLE_MS = 3000;
+const DRAFT_MANAGEMENT_TITLE_WAIT_ATTEMPTS = 20;
+const DRAFT_MANAGEMENT_URL = "https://om.qq.com/main/management/articleManage";
 const LOGIN_UNCONFIRMED_MESSAGE =
   "当前窗口未登录，发布状态未确认；请先检查企鹅号后台是否已发出，确认未发出后再在 ixBrowser 对应窗口完成扫码登录并重试";
 
@@ -357,13 +365,15 @@ const ARTICLE_COVER_APPLIED_SELECTORS = [
   ".article-cover-preview img"
 ] as const;
 
+const DRAFT_SAVE_BUTTON_LABELS = ["存草稿", "保存草稿", "草稿"] as const;
+const DRAFT_SAVED_SELECTORS = ["text=保存成功"] as const;
+
 type PublishArticleDependency = (
   input: Omit<PublishArticleInput, "page"> & { page: unknown }
 ) => Promise<PublishArticleResult>;
 
 export interface RunCommandDependencies {
   loadConfig: (filePath: string) => Promise<RuntimeConfig>;
-  saveConfig: (filePath: string, config: RuntimeConfig) => Promise<void>;
   allocateVideosForProfiles: typeof allocateVideosForProfiles;
   movePublishedVideoToUsed: typeof movePublishedVideoToUsed;
   pickRandomCover: typeof pickRandomCover;
@@ -444,7 +454,8 @@ function isPenguinPublishPageLike(value: unknown): value is PenguinPublishPageLi
     typeof candidate.applyDeclaration === "function" &&
     typeof candidate.applyAiDeclaration === "function" &&
     typeof candidate.readPrePublishState === "function" &&
-    typeof candidate.clickPublish === "function"
+    typeof candidate.saveDraft === "function" &&
+    typeof candidate.confirmSavedDraft === "function"
   );
 }
 
@@ -469,6 +480,105 @@ async function pickVisibleLocator(
   }
 
   throw new Error(`未找到${description}`);
+}
+
+async function clickExactVisibleButton(
+  page: PlaywrightPageLike,
+  labels: readonly string[]
+): Promise<string> {
+  for (const label of labels) {
+    if (typeof page.getByRole === "function") {
+      const locator = page.getByRole("button", { name: label, exact: true });
+
+      if ((await locator.count()) > 0 && (await locator.nth(0).isVisible())) {
+        await locator.nth(0).click();
+        return label;
+      }
+    }
+
+    const buttons = page.locator("button");
+    const buttonCount = await buttons.count();
+
+    for (let index = 0; index < buttonCount; index += 1) {
+      const button = buttons.nth(index);
+      const buttonText = await button.textContent?.();
+
+      if (buttonText?.trim() === label && (await button.isVisible())) {
+        await button.click();
+        return label;
+      }
+    }
+  }
+
+  throw new Error("未找到可用存草稿按钮");
+}
+
+async function waitForDraftSaveConfirmation(
+  page: PlaywrightPageLike
+): Promise<void> {
+  for (let attempt = 0; attempt < DRAFT_SAVE_CONFIRM_ATTEMPTS; attempt += 1) {
+    if (await hasExplicitVisibleSignal(page, DRAFT_SAVED_SELECTORS)) {
+      return;
+    }
+
+    await waitForUiTick(page);
+  }
+
+  throw new Error("点击存草稿后未确认保存成功");
+}
+
+async function hasVisibleExactText(
+  page: PlaywrightPageLike,
+  text: string
+): Promise<boolean> {
+  if (typeof page.getByText === "function") {
+    const locator = page.getByText(text, { exact: true });
+    return (await locator.count()) > 0 && (await locator.nth(0).isVisible());
+  }
+
+  if (typeof page.evaluate !== "function") {
+    return false;
+  }
+
+  return page.evaluate<boolean, string>((expectedTitle) => {
+    return Array.from(document.querySelectorAll<HTMLElement>("body *")).some(
+      (element) => {
+        if (element.textContent?.trim() !== expectedTitle) {
+          return false;
+        }
+
+        const style = window.getComputedStyle(element);
+        return style.display !== "none" && style.visibility !== "hidden";
+      }
+    );
+  }, text);
+}
+
+async function confirmSavedDraftInManagement(
+  page: PlaywrightPageLike,
+  title: string
+): Promise<void> {
+  if (typeof page.waitForTimeout === "function") {
+    await page.waitForTimeout(DRAFT_MANAGEMENT_SETTLE_MS);
+  }
+
+  await bringPageToFront(page);
+  await page.goto(DRAFT_MANAGEMENT_URL, { waitUntil: "domcontentloaded" });
+  await bringPageToFront(page);
+
+  for (
+    let attempt = 0;
+    attempt < DRAFT_MANAGEMENT_TITLE_WAIT_ATTEMPTS;
+    attempt += 1
+  ) {
+    if (await hasVisibleExactText(page, title)) {
+      return;
+    }
+
+    await waitForUiTick(page);
+  }
+
+  throw new Error(`内容管理列表未找到标题为“${title}”的草稿`);
 }
 
 async function waitForUiTick(page: PlaywrightPageLike): Promise<void> {
@@ -734,87 +844,8 @@ async function hasExplicitVisibleSignal(
   return (await findVisibleLocatorGroup(page, selectors)) !== null;
 }
 
-async function readCurrentUrlIfPossible(
-  page: PlaywrightPageLike
-): Promise<string | null> {
-  if (typeof page.evaluate !== "function") {
-    return null;
-  }
-
-  try {
-    const currentUrl = await page.evaluate<string>(() => window.location.href);
-    return typeof currentUrl === "string" && currentUrl.trim().length > 0
-      ? currentUrl.trim()
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function isPublishEditorUrl(url: string): boolean {
-  return /\/article\/publish(?:[/?#]|$)/u.test(url);
-}
-
 function isLoginUrl(url: string): boolean {
   return /om\.qq\.com\/userAuth\/index(?:[/?#]|$)/u.test(url);
-}
-
-function hasPublishSucceededByUrl(
-  initialUrl: string | null,
-  currentUrl: string | null
-): boolean {
-  if (typeof currentUrl !== "string" || currentUrl.trim().length === 0) {
-    return false;
-  }
-
-  const normalizedCurrentUrl = currentUrl.trim();
-
-  if (isPublishEditorUrl(normalizedCurrentUrl)) {
-    return false;
-  }
-
-  if (isLoginUrl(normalizedCurrentUrl)) {
-    return false;
-  }
-
-  if (initialUrl === null) {
-    return true;
-  }
-
-  return normalizedCurrentUrl !== initialUrl.trim();
-}
-
-async function waitForPublishSuccessNavigation(
-  page: PlaywrightPageLike,
-  initialUrl: string | null
-): Promise<void> {
-  if (typeof page.evaluate !== "function") {
-    return;
-  }
-
-  for (let attempt = 0; attempt < PUBLISH_SUCCESS_WAIT_ATTEMPTS; attempt += 1) {
-    const currentUrl = await readCurrentUrlIfPossible(page);
-
-    if (hasPublishSucceededByUrl(initialUrl, currentUrl)) {
-      return;
-    }
-
-    await waitForUiTick(page);
-  }
-
-  const currentUrl = await readCurrentUrlIfPossible(page);
-
-  if (typeof currentUrl === "string" && isLoginUrl(currentUrl)) {
-    throw new Error(
-      `点击发布后跳到登录页，发布状态未确认；请先检查企鹅号后台是否已发出，确认未发出后再登录重试（当前URL="${currentUrl}"）`
-    );
-  }
-
-  if (typeof currentUrl === "string" && isPublishEditorUrl(currentUrl)) {
-    throw new Error(`点击发布后仍停留在发布页，未确认发布成功（当前URL="${currentUrl}"）`);
-  }
-
-  throw new Error("点击发布后未确认发布成功");
 }
 
 async function bringPageToFront(page: PlaywrightPageLike): Promise<void> {
@@ -2701,24 +2732,14 @@ export function createPlaywrightPageAdapter(
       });
       return filePath;
     },
-    async clickPublish() {
+    async saveDraft() {
       await bringPageToFront(page);
-      const initialUrl = await readCurrentUrlIfPossible(page);
-
-      if (page.getByRole) {
-        await page.getByRole("button", { name: "发布", exact: true }).click();
-        await waitForUiTick(page);
-        await waitForPublishSuccessNavigation(page, initialUrl);
-        return;
-      }
-
-      const locator = await pickVisibleLocator(page, [
-        'button:has-text("发布")',
-        '[role="button"]:has-text("发布")'
-      ], "可用发布按钮");
-      await locator.click();
+      await clickExactVisibleButton(page, DRAFT_SAVE_BUTTON_LABELS);
       await waitForUiTick(page);
-      await waitForPublishSuccessNavigation(page, initialUrl);
+      await waitForDraftSaveConfirmation(page);
+    },
+    async confirmSavedDraft(title) {
+      await confirmSavedDraftInManagement(page, title);
     }
   };
 }
@@ -2770,21 +2791,8 @@ function formatOverallSummary(results: readonly WindowRunResult[]): string[] {
   ];
 }
 
-function formatModeHint(mode: RuntimeConfig["mode"]): string {
-  return mode === "auto-publish"
-    ? "当前是正式模式，全自动发布，可切换到开发模式。"
-    : "当前是开发模式，半自动发布，可切换到正式模式。";
-}
-
-function formatModeSwitchResult(mode: RuntimeConfig["mode"]): string {
-  return mode === "auto-publish"
-    ? "已切换到正式模式，全自动发布。"
-    : "已切换到开发模式，半自动发布。";
-}
-
 const defaultDependencies: RunCommandDependencies = {
   loadConfig,
-  saveConfig,
   allocateVideosForProfiles,
   movePublishedVideoToUsed,
   pickRandomCover,
@@ -2810,20 +2818,6 @@ export async function runCommandReport(
   const config = await deps.loadConfig(DEFAULT_CONFIG_PATH);
   const parsedCommand = parsePublishCommand(command);
   let releasePublishRunLock: (() => Promise<void> | void) | null = null;
-
-  if (parsedCommand.kind === "mode-switch") {
-    const nextConfig: RuntimeConfig = {
-      ...config,
-      mode: parsedCommand.mode
-    };
-    await deps.saveConfig(DEFAULT_CONFIG_PATH, nextConfig);
-
-    return {
-      summaries: [formatModeSwitchResult(parsedCommand.mode)],
-      results: [],
-      overallSummaryLines: []
-    };
-  }
 
   const profileIds = parsedCommand.profileIds;
   releasePublishRunLock = await deps.acquirePublishRunLock(
@@ -2886,7 +2880,6 @@ export async function runCommandReport(
             articleAssets.picture2Path
           ],
           articleCoverPath: articleAssets.articleCoverPath,
-          mode: config.mode,
           evidenceDir: join(config.assetsRoot, "logs"),
           reportProgress: async (message) => {
             const progressLine = `${allocation.profileId}窗口：${allocation.title} ${message}`;
@@ -2908,7 +2901,7 @@ export async function runCommandReport(
           message: publishResult.message
         };
 
-        if (publishResult.status === "published") {
+        if (publishResult.status === "draft-saved") {
           try {
             await deps.movePublishedVideoToUsed(
               allocation.videoPath,
@@ -2918,7 +2911,7 @@ export async function runCommandReport(
             result = {
               ...result,
               status: "failed",
-              message: `${publishResult.message}；移动已发布视频失败：${formatErrorMessage(moveError)}`
+              message: `${publishResult.message}；移动已存草稿视频失败：${formatErrorMessage(moveError)}`
             };
           }
         }
@@ -3024,11 +3017,6 @@ export async function runCli(
         console.log(summary);
       }
     };
-
-    if (parsedCommand.kind === "publish") {
-      const config = await (depsForCli.loadConfig ?? loadConfig)(DEFAULT_CONFIG_PATH);
-      console.log(formatModeHint(config.mode));
-    }
 
     const report = await runCommandReport(command, depsForCli);
 
