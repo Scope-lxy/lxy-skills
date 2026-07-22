@@ -23,12 +23,17 @@ describe("parsePublishCommand", () => {
     });
   });
 
-  it("rejects retired mode switch commands", () => {
-    expect(() => parsePublishCommand("/发企鹅号 开发模式")).toThrow(
-      "命令格式不正确"
-    );
-    expect(() => parsePublishCommand("/发视频 正式模式")).toThrow(
-      "命令格式不正确"
-    );
+  it("parses a development mode switch command", () => {
+    expect(parsePublishCommand("/发企鹅号 开发模式")).toEqual({
+      kind: "mode-switch",
+      mode: "pause-before-publish"
+    });
+  });
+
+  it("parses a production mode switch command from the short alias", () => {
+    expect(parsePublishCommand("/发视频 正式模式")).toEqual({
+      kind: "mode-switch",
+      mode: "auto-publish"
+    });
   });
 });

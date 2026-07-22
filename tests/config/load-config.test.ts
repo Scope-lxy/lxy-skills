@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "../../src/config/load-config.js";
+import { saveConfig } from "../../src/config/save-config.js";
 
 describe("loadConfig", () => {
   it("loads and validates the runtime config", async () => {
@@ -12,7 +14,8 @@ describe("loadConfig", () => {
     const expected = {
       ixBrowserApiBaseUrl: "http://127.0.0.1:53200",
       penguinPublishUrl: "https://om.qq.com/userAuth/index",
-      assetsRoot: "C:/企鹅号发布"
+      assetsRoot: "C:/企鹅号发布",
+      mode: "pause-before-publish"
     };
 
     writeFileSync(filePath, JSON.stringify(expected));
@@ -20,7 +23,7 @@ describe("loadConfig", () => {
     await expect(loadConfig(filePath)).resolves.toEqual(expected);
   });
 
-  it("ignores the retired mode field in an existing local config", async () => {
+  it("rejects invalid mode values", async () => {
     const dir = mkdtempSync(join(tmpdir(), "qq-config-"));
     const filePath = join(dir, "config.json");
 
@@ -34,11 +37,7 @@ describe("loadConfig", () => {
       })
     );
 
-    await expect(loadConfig(filePath)).resolves.toEqual({
-      ixBrowserApiBaseUrl: "http://127.0.0.1:53200",
-      penguinPublishUrl: "https://om.qq.com/userAuth/index",
-      assetsRoot: "C:/企鹅号发布"
-    });
+    await expect(loadConfig(filePath)).rejects.toThrow("mode");
   });
 
   it("rejects a null root node", async () => {
@@ -71,7 +70,8 @@ describe("loadConfig", () => {
       filePath,
       JSON.stringify({
         ixBrowserApiBaseUrl: "http://127.0.0.1:53200",
-        penguinPublishUrl: "https://om.qq.com/userAuth/index"
+        penguinPublishUrl: "https://om.qq.com/userAuth/index",
+        mode: "pause-before-publish"
       })
     );
 
@@ -89,7 +89,8 @@ describe("loadConfig", () => {
       JSON.stringify({
         ixBrowserApiBaseUrl: "http://127.0.0.1:53200",
         penguinPublishUrl: "https://om.qq.com/userAuth/index",
-        assetsRoot: 123
+        assetsRoot: 123,
+        mode: "pause-before-publish"
       })
     );
 
@@ -98,4 +99,19 @@ describe("loadConfig", () => {
     );
   });
 
+  it("saves a runtime config that can be loaded back", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "qq-config-"));
+    const filePath = join(dir, "config.json");
+    const expected = {
+      ixBrowserApiBaseUrl: "http://127.0.0.1:53200",
+      penguinPublishUrl: "https://om.qq.com/main/creation/article",
+      assetsRoot: "C:/Users/LXYou/Desktop/企鹅号发布",
+      mode: "auto-publish" as const
+    };
+
+    await saveConfig(filePath, expected);
+
+    expect(readFileSync(filePath, "utf8")).toContain('"mode": "auto-publish"');
+    await expect(loadConfig(filePath)).resolves.toEqual(expected);
+  });
 });

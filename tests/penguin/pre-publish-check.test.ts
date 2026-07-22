@@ -1,4 +1,4 @@
-﻿import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   publishArticle,
   toVideoPublishTitle,
@@ -90,11 +90,8 @@ function createFakePage(
       actions.push(`capturePrePublishEvidence:${label}:${evidenceDir}`);
       return `${evidenceDir}/${label}.png`;
     },
-    async saveDraft() {
-      actions.push("saveDraft");
-    },
-    async confirmSavedDraft(title) {
-      actions.push(`confirmSavedDraft:${title}`);
+    async clickPublish() {
+      actions.push("clickPublish");
     }
   };
 }
@@ -242,11 +239,12 @@ describe("validatePrePublishState", () => {
           "C:/企鹅号发布/pictures/配图2-A版本.jpg"
         ],
         articleCoverPath: "C:/企鹅号发布/covers/封面-A版.jpg",
+        mode: "pause-before-publish",
         evidenceDir: "C:/企鹅号发布/logs"
       })
     ).resolves.toEqual({
-      status: "draft-saved",
-      message: "已存草稿"
+      status: "ready-to-publish",
+      message: "已完成，停在发布前"
     });
 
     expect(actions).toContain("fillTitle:测试标题");
@@ -284,18 +282,19 @@ describe("validatePrePublishState", () => {
           "C:/企鹅号发布/pictures/配图2-A版本.jpg"
         ],
         articleCoverPath: "C:/企鹅号发布/covers/封面-A版.jpg",
+        mode: "pause-before-publish",
         evidenceDir: "C:/企鹅号发布/logs"
       })
     ).rejects.toThrow("标题与目标不一致");
 
     expect(actions.filter((action) => action === "fillTitle:测试标题")).toHaveLength(2);
     expect(actions.filter((action) => action === "readPrePublishState")).toHaveLength(2);
-    expect(actions).not.toContain("saveDraft");
+    expect(actions).not.toContain("clickPublish");
   });
 });
 
 describe("publishArticle", () => {
-  it("saves a draft after the skeleton steps", async () => {
+  it("stops before publish in pause mode after the skeleton steps", async () => {
     const actions: string[] = [];
     const page = createFakePage(actions);
 
@@ -311,11 +310,12 @@ describe("publishArticle", () => {
           "C:/企鹅号发布/pictures/配图2-A版本.jpg"
         ],
       articleCoverPath: "C:/企鹅号发布/covers/封面-A版.jpg",
+      mode: "pause-before-publish",
       evidenceDir: "C:/企鹅号发布/logs"
     })
     ).resolves.toEqual({
-      status: "draft-saved",
-      message: "已存草稿"
+      status: "ready-to-publish",
+      message: "已完成，停在发布前"
     });
 
     expect(actions).toEqual([
@@ -334,9 +334,7 @@ describe("publishArticle", () => {
       "ensureVideoReady",
       "removeEmptyContentBlocks",
       "applyAiDeclaration:提交",
-      "readPrePublishState",
-      "saveDraft",
-      "confirmSavedDraft:测试标题"
+      "readPrePublishState"
     ]);
   });
 
@@ -355,6 +353,7 @@ describe("publishArticle", () => {
         "C:/企鹅号发布/pictures/配图2-A版本.jpg"
       ],
       articleCoverPath: "C:/企鹅号发布/covers/封面-A版.jpg",
+      mode: "pause-before-publish",
       evidenceDir: "C:/企鹅号发布/logs"
     });
 
@@ -371,7 +370,7 @@ describe("publishArticle", () => {
     );
   });
 
-  it("saves a draft after the skeleton steps", async () => {
+  it("clicks publish in auto mode after the skeleton steps", async () => {
     const actions: string[] = [];
     const page = createFakePage(actions);
 
@@ -387,11 +386,12 @@ describe("publishArticle", () => {
           "C:/企鹅号发布/pictures/配图2-A版本.jpg"
         ],
       articleCoverPath: "C:/企鹅号发布/covers/封面-A版.jpg",
+      mode: "auto-publish",
       evidenceDir: "C:/企鹅号发布/logs"
     })
     ).resolves.toEqual({
-      status: "draft-saved",
-      message: "已存草稿"
+      status: "published",
+      message: "已自动发布"
     });
 
     expect(actions).toEqual([
@@ -411,8 +411,7 @@ describe("publishArticle", () => {
       "removeEmptyContentBlocks",
       "applyAiDeclaration:提交",
       "readPrePublishState",
-      "saveDraft",
-      "confirmSavedDraft:测试标题"
+      "clickPublish"
     ]);
   });
 
@@ -431,6 +430,7 @@ describe("publishArticle", () => {
         "C:/企鹅号发布/pictures/配图2-A版本.jpg"
       ],
       articleCoverPath: "C:/企鹅号发布/covers/封面-A版.jpg",
+      mode: "pause-before-publish",
       evidenceDir: "C:/企鹅号发布/logs"
     });
 
@@ -464,6 +464,7 @@ describe("publishArticle", () => {
           "C:/企鹅号发布/pictures/配图2-A版本.jpg"
         ],
         articleCoverPath: "C:/企鹅号发布/covers/封面-A版.jpg",
+        mode: "pause-before-publish",
         evidenceDir: "C:/企鹅号发布/logs"
       })
     ).rejects.toThrow("当前窗口未登录，发布状态未确认");
@@ -497,11 +498,12 @@ describe("publishArticle", () => {
           "C:/企鹅号发布/pictures/配图2-A版本.jpg"
         ],
         articleCoverPath: "C:/企鹅号发布/covers/封面-A版.jpg",
+        mode: "auto-publish",
         evidenceDir: "C:/企鹅号发布/logs"
       })
     ).resolves.toEqual({
-      status: "draft-saved",
-      message: "已存草稿"
+      status: "published",
+      message: "已自动发布"
     });
 
     expect(actions).toEqual([
@@ -538,8 +540,48 @@ describe("publishArticle", () => {
       "removeEmptyContentBlocks",
       "applyAiDeclaration:提交",
       "readPrePublishState",
-      "saveDraft",
-      "confirmSavedDraft:测试标题"
+      "clickPublish"
+    ]);
+  });
+
+  it("rejects an unsupported mode instead of falling through to auto publish", async () => {
+    const actions: string[] = [];
+    const page = createFakePage(actions);
+
+    await expect(
+      publishArticle({
+        page,
+        publishUrl: "https://om.qq.com/article/publish",
+        title: "测试标题",
+        videoPath: "C:/企鹅号发布/videos/demo.mp4",
+        videoCoverPath: "C:/企鹅号发布/video-covers/demo.jpg",
+        articleImagePaths: [
+          "C:/企鹅号发布/pictures/配图1-A版本.jpg",
+          "C:/企鹅号发布/pictures/配图2-A版本.jpg"
+        ],
+        articleCoverPath: "C:/企鹅号发布/covers/封面-A版.jpg",
+        mode: "unexpected-mode" as unknown as "pause-before-publish",
+        evidenceDir: "C:/企鹅号发布/logs"
+      })
+    ).rejects.toThrow('不支持的发布模式: "unexpected-mode"');
+
+    expect(actions).toEqual([
+      "goto:https://om.qq.com/article/publish:domcontentloaded",
+      "ensureLoggedIn",
+      "resetDraft",
+      "fillTitle:测试标题",
+      "setArticleCover:C:/企鹅号发布/covers/封面-A版.jpg",
+      "applyDeclaration:剧情演绎，仅供娱乐",
+      "focusEditorBody",
+      "insertArticleImages:C:/企鹅号发布/pictures/配图1-A版本.jpg,C:/企鹅号发布/pictures/配图2-A版本.jpg",
+      "moveEditorCursorToStart",
+      "uploadVideo:C:/企鹅号发布/videos/demo.mp4",
+      "fillVideoTitle:测试标题",
+      "setVideoCover:C:/企鹅号发布/video-covers/demo.jpg",
+      "ensureVideoReady",
+      "removeEmptyContentBlocks",
+      "applyAiDeclaration:提交",
+      "readPrePublishState"
     ]);
   });
 
@@ -565,6 +607,7 @@ describe("publishArticle", () => {
           "C:/企鹅号发布/pictures/配图2-A版本.jpg"
         ],
         articleCoverPath: "C:/企鹅号发布/covers/封面-A版.jpg",
+        mode: "pause-before-publish",
         evidenceDir: "C:/企鹅号发布/logs"
       })
     ).rejects.toThrow("视频未插入正文");
@@ -613,6 +656,7 @@ describe("publishArticle", () => {
           "C:/企鹅号发布/pictures/配图2-A版本.jpg"
         ],
         articleCoverPath: "C:/企鹅号发布/covers/封面-A版.jpg",
+        mode: "pause-before-publish",
         evidenceDir: "C:/企鹅号发布/logs"
       })
     ).rejects.toThrow(
