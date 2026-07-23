@@ -114,6 +114,38 @@ describe("movePublishedVideoToUsed", () => {
 });
 
 describe("pickRandomCover", () => {
+  it("prioritizes a matched image beside the video over video-covers", async () => {
+    const rootDir = mkdtempSync(join(tmpdir(), "qq-cover-priority-"));
+    const videosDir = join(rootDir, "videos");
+    const coversDir = join(rootDir, "video-covers");
+    mkdirSync(videosDir);
+    mkdirSync(coversDir);
+    const videoPath = join(videosDir, "晚安❤️.mp4");
+    const localCoverPath = join(videosDir, "晚安❤️_cover.png");
+    writeFileSync(videoPath, "");
+    writeFileSync(localCoverPath, "");
+    writeFileSync(join(coversDir, "晚安❤️.jpg"), "");
+
+    await expect(pickRandomCover(coversDir, videoPath)).resolves.toBe(localCoverPath);
+  });
+
+  it("falls back to video-covers when no image beside the video matches", async () => {
+    const rootDir = mkdtempSync(join(tmpdir(), "qq-cover-fallback-"));
+    const videosDir = join(rootDir, "videos");
+    const coversDir = join(rootDir, "video-covers");
+    mkdirSync(videosDir);
+    mkdirSync(coversDir);
+    const videoPath = join(videosDir, "晚安❤️.mp4");
+    const fallbackCoverPath = join(coversDir, "晚安❤️_cover.png");
+    writeFileSync(videoPath, "");
+    writeFileSync(join(videosDir, "无关图片.jpg"), "");
+    writeFileSync(fallbackCoverPath, "");
+
+    await expect(pickRandomCover(coversDir, videoPath)).resolves.toBe(
+      fallbackCoverPath
+    );
+  });
+
   it("prefers an exactly matched cover basename for the target video", async () => {
     const dir = mkdtempSync(join(tmpdir(), "qq-covers-"));
     writeFileSync(join(dir, "aaa.jpg"), "");
@@ -406,8 +438,8 @@ describe("run logger", () => {
       title: "你好🥺",
       videoPath: "C:/企鹅号发布/videos/你好🥺.mp4",
       coverPath: "C:/企鹅号发布/video-covers/cover-a.jpg",
-      status: "ready-to-publish",
-      message: "已停在发布前"
+      status: "draft-saved",
+      message: "已存草稿"
     });
 
     const fileContent = readFileSync(logFile, "utf8");
@@ -419,8 +451,8 @@ describe("run logger", () => {
       title: "你好🥺",
       videoPath: "C:/企鹅号发布/videos/你好🥺.mp4",
       coverPath: "C:/企鹅号发布/video-covers/cover-a.jpg",
-      status: "ready-to-publish",
-      message: "已停在发布前"
+      status: "draft-saved",
+      message: "已存草稿"
     });
   });
 });

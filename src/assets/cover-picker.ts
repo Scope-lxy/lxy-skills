@@ -1,5 +1,6 @@
+import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
-import { join, parse, relative } from "node:path";
+import { dirname, join, parse, relative } from "node:path";
 
 const IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".webp"]);
 
@@ -66,10 +67,47 @@ function preferRootCandidates(
   return rootCandidates.length > 0 ? rootCandidates : candidates;
 }
 
+function pickMatchedCover(
+  candidates: readonly CoverCandidate[],
+  videoPath: string
+): string | null {
+  const videoBaseName = normalizeName(parse(videoPath).name);
+  const exactMatches = candidates.filter((candidate) => {
+    return normalizeName(candidate.baseName) === videoBaseName;
+  });
+
+  if (exactMatches.length > 0) {
+    return pickRandom(preferRootCandidates(exactMatches)).filePath;
+  }
+
+  const containingMatches = candidates.filter((candidate) => {
+    return normalizeName(candidate.baseName).includes(videoBaseName);
+  });
+
+  return containingMatches.length > 0
+    ? pickRandom(preferRootCandidates(containingMatches)).filePath
+    : null;
+}
+
 export async function pickRandomCover(
   coversDir: string,
   videoPath?: string
 ): Promise<string> {
+  if (typeof videoPath === "string" && videoPath.trim().length > 0) {
+    const videoDir = dirname(videoPath);
+
+    if (existsSync(videoDir)) {
+      const localMatch = pickMatchedCover(
+        await readCoverCandidates(videoDir),
+        videoPath
+      );
+
+      if (localMatch !== null) {
+        return localMatch;
+      }
+    }
+  }
+
   const files = await readCoverCandidates(coversDir);
 
   if (files.length === 0) {
@@ -77,21 +115,10 @@ export async function pickRandomCover(
   }
 
   if (typeof videoPath === "string" && videoPath.trim().length > 0) {
-    const videoBaseName = normalizeName(parse(videoPath).name);
-    const exactMatches = files.filter((file) => {
-      return normalizeName(file.baseName) === videoBaseName;
-    });
+    const matchedCover = pickMatchedCover(files, videoPath);
 
-    if (exactMatches.length > 0) {
-      return pickRandom(preferRootCandidates(exactMatches)).filePath;
-    }
-
-    const containingMatches = files.filter((file) => {
-      return normalizeName(file.baseName).includes(videoBaseName);
-    });
-
-    if (containingMatches.length > 0) {
-      return pickRandom(preferRootCandidates(containingMatches)).filePath;
+    if (matchedCover !== null) {
+      return matchedCover;
     }
   }
 
