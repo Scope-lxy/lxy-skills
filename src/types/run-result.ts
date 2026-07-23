@@ -1,4 +1,4 @@
-export type WindowStatus = "ready-to-publish" | "published" | "failed";
+export type WindowStatus = "draft-saved" | "published" | "failed";
 
 export interface WindowRunResult {
   profileId: number;

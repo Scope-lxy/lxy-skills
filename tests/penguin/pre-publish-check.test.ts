@@ -90,6 +90,12 @@ function createFakePage(
       actions.push(`capturePrePublishEvidence:${label}:${evidenceDir}`);
       return `${evidenceDir}/${label}.png`;
     },
+    async saveDraft() {
+      actions.push("saveDraft");
+    },
+    async confirmSavedDraft(title) {
+      actions.push(`confirmSavedDraft:${title}`);
+    },
     async clickPublish() {
       actions.push("clickPublish");
     }
@@ -243,8 +249,8 @@ describe("validatePrePublishState", () => {
         evidenceDir: "C:/企鹅号发布/logs"
       })
     ).resolves.toEqual({
-      status: "ready-to-publish",
-      message: "已完成，停在发布前"
+      status: "draft-saved",
+      message: "已存草稿"
     });
 
     expect(actions).toContain("fillTitle:测试标题");
@@ -294,7 +300,7 @@ describe("validatePrePublishState", () => {
 });
 
 describe("publishArticle", () => {
-  it("stops before publish in pause mode after the skeleton steps", async () => {
+  it("saves and confirms the draft in development mode after the skeleton steps", async () => {
     const actions: string[] = [];
     const page = createFakePage(actions);
 
@@ -314,8 +320,8 @@ describe("publishArticle", () => {
       evidenceDir: "C:/企鹅号发布/logs"
     })
     ).resolves.toEqual({
-      status: "ready-to-publish",
-      message: "已完成，停在发布前"
+      status: "draft-saved",
+      message: "已存草稿"
     });
 
     expect(actions).toEqual([
@@ -334,8 +340,11 @@ describe("publishArticle", () => {
       "ensureVideoReady",
       "removeEmptyContentBlocks",
       "applyAiDeclaration:提交",
-      "readPrePublishState"
+      "readPrePublishState",
+      "saveDraft",
+      "confirmSavedDraft:测试标题"
     ]);
+    expect(actions).not.toContain("clickPublish");
   });
 
   it("inserts images first and then moves the cursor to the start before uploading the video", async () => {

@@ -33,6 +33,8 @@ export interface PenguinPublishPageLike {
     label: string,
     evidenceDir: string
   ): Promise<string | null>;
+  saveDraft(): Promise<void>;
+  confirmSavedDraft(title: string): Promise<void>;
   clickPublish(): Promise<void>;
 }
 
@@ -50,7 +52,7 @@ export interface PublishArticleInput {
 }
 
 export interface PublishArticleResult {
-  status: "ready-to-publish" | "published";
+  status: "draft-saved" | "published";
   message: string;
 }
 
@@ -118,13 +120,17 @@ async function buildDraft(
 
 async function finishPublish(
   page: PenguinPublishPageLike,
+  title: string,
   mode: PublishMode
 ): Promise<PublishArticleResult> {
   switch (mode) {
     case "pause-before-publish":
+      await page.saveDraft();
+      await page.confirmSavedDraft(title);
+
       return {
-        status: "ready-to-publish",
-        message: "已完成，停在发布前"
+        status: "draft-saved",
+        message: "已存草稿"
       };
     case "auto-publish":
       await page.clickPublish();
@@ -186,7 +192,7 @@ export async function publishArticle(
     });
 
     if (issues.length === 0) {
-      return finishPublish(page, mode);
+      return finishPublish(page, title, mode);
     }
 
     if (issues.includes(TITLE_MISMATCH_ISSUE)) {
@@ -194,7 +200,7 @@ export async function publishArticle(
 
       if (!correctedIssues.includes(TITLE_MISMATCH_ISSUE)) {
         if (correctedIssues.length === 0) {
-          return finishPublish(page, mode);
+          return finishPublish(page, title, mode);
         }
 
         lastIssues = correctedIssues;

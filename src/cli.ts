@@ -98,6 +98,12 @@ interface PlaywrightPageLike {
       exact?: boolean;
     }
   ): PlaywrightLocatorLike;
+  getByText?(
+    text: string,
+    options?: {
+      exact?: boolean;
+    }
+  ): PlaywrightLocatorLike;
 }
 
 const TITLE_INPUT_SELECTORS = [
@@ -187,6 +193,10 @@ const DRAFT_RESTORE_WAIT_MS = 10000;
 const VIDEO_UPLOAD_HEARTBEAT_INTERVAL_MS = 30000;
 const VIDEO_UPLOAD_HEARTBEAT_BASE_MESSAGE = "继续等待，不要结束任务";
 const PUBLISH_SUCCESS_WAIT_ATTEMPTS = 40;
+const DRAFT_SAVE_CONFIRM_ATTEMPTS = 20;
+const DRAFT_MANAGEMENT_SETTLE_MS = 3000;
+const DRAFT_MANAGEMENT_TITLE_WAIT_ATTEMPTS = 20;
+const DRAFT_MANAGEMENT_URL = "https://om.qq.com/main/management/articleManage";
 const LOGIN_UNCONFIRMED_MESSAGE =
   "当前窗口未登录，发布状态未确认；请先检查企鹅号后台是否已发出，确认未发出后再在 ixBrowser 对应窗口完成扫码登录并重试";
 
@@ -357,6 +367,9 @@ const ARTICLE_COVER_APPLIED_SELECTORS = [
   ".article-cover-preview img"
 ] as const;
 
+const DRAFT_SAVE_BUTTON_LABELS = ["存草稿", "保存草稿", "草稿"] as const;
+const DRAFT_SAVED_SELECTORS = ["text=保存成功"] as const;
+
 type PublishArticleDependency = (
   input: Omit<PublishArticleInput, "page"> & { page: unknown }
 ) => Promise<PublishArticleResult>;
@@ -444,6 +457,8 @@ function isPenguinPublishPageLike(value: unknown): value is PenguinPublishPageLi
     typeof candidate.applyDeclaration === "function" &&
     typeof candidate.applyAiDeclaration === "function" &&
     typeof candidate.readPrePublishState === "function" &&
+    typeof candidate.saveDraft === "function" &&
+    typeof candidate.confirmSavedDraft === "function" &&
     typeof candidate.clickPublish === "function"
   );
 }
@@ -469,6 +484,105 @@ async function pickVisibleLocator(
   }
 
   throw new Error(`未找到${description}`);
+}
+
+async function clickExactVisibleButton(
+  page: PlaywrightPageLike,
+  labels: readonly string[]
+): Promise<string> {
+  for (const label of labels) {
+    if (typeof page.getByRole === "function") {
+      const locator = page.getByRole("button", { name: label, exact: true });
+
+      if ((await locator.count()) > 0 && (await locator.nth(0).isVisible())) {
+        await locator.nth(0).click();
+        return label;
+      }
+    }
+
+    const buttons = page.locator("button");
+    const buttonCount = await buttons.count();
+
+    for (let index = 0; index < buttonCount; index += 1) {
+      const button = buttons.nth(index);
+      const buttonText = await button.textContent?.();
+
+      if (buttonText?.trim() === label && (await button.isVisible())) {
+        await button.click();
+        return label;
+      }
+    }
+  }
+
+  throw new Error("未找到可用存草稿按钮");
+}
+
+async function waitForDraftSaveConfirmation(
+  page: PlaywrightPageLike
+): Promise<void> {
+  for (let attempt = 0; attempt < DRAFT_SAVE_CONFIRM_ATTEMPTS; attempt += 1) {
+    if (await hasExplicitVisibleSignal(page, DRAFT_SAVED_SELECTORS)) {
+      return;
+    }
+
+    await waitForUiTick(page);
+  }
+
+  throw new Error("点击存草稿后未确认保存成功");
+}
+
+async function hasVisibleExactText(
+  page: PlaywrightPageLike,
+  text: string
+): Promise<boolean> {
+  if (typeof page.getByText === "function") {
+    const locator = page.getByText(text, { exact: true });
+    return (await locator.count()) > 0 && (await locator.nth(0).isVisible());
+  }
+
+  if (typeof page.evaluate !== "function") {
+    return false;
+  }
+
+  return page.evaluate<boolean, string>((expectedTitle) => {
+    return Array.from(document.querySelectorAll<HTMLElement>("body *")).some(
+      (element) => {
+        if (element.textContent?.trim() !== expectedTitle) {
+          return false;
+        }
+
+        const style = window.getComputedStyle(element);
+        return style.display !== "none" && style.visibility !== "hidden";
+      }
+    );
+  }, text);
+}
+
+async function confirmSavedDraftInManagement(
+  page: PlaywrightPageLike,
+  title: string
+): Promise<void> {
+  if (typeof page.waitForTimeout === "function") {
+    await page.waitForTimeout(DRAFT_MANAGEMENT_SETTLE_MS);
+  }
+
+  await bringPageToFront(page);
+  await page.goto(DRAFT_MANAGEMENT_URL, { waitUntil: "domcontentloaded" });
+  await bringPageToFront(page);
+
+  for (
+    let attempt = 0;
+    attempt < DRAFT_MANAGEMENT_TITLE_WAIT_ATTEMPTS;
+    attempt += 1
+  ) {
+    if (await hasVisibleExactText(page, title)) {
+      return;
+    }
+
+    await waitForUiTick(page);
+  }
+
+  throw new Error(`内容管理列表未找到标题为“${title}”的草稿`);
 }
 
 async function waitForUiTick(page: PlaywrightPageLike): Promise<void> {
@@ -2719,6 +2833,15 @@ export function createPlaywrightPageAdapter(
       await locator.click();
       await waitForUiTick(page);
       await waitForPublishSuccessNavigation(page, initialUrl);
+    },
+    async saveDraft() {
+      await bringPageToFront(page);
+      await clickExactVisibleButton(page, DRAFT_SAVE_BUTTON_LABELS);
+      await waitForUiTick(page);
+      await waitForDraftSaveConfirmation(page);
+    },
+    async confirmSavedDraft(title) {
+      await confirmSavedDraftInManagement(page, title);
     }
   };
 }
@@ -2773,13 +2896,13 @@ function formatOverallSummary(results: readonly WindowRunResult[]): string[] {
 function formatModeHint(mode: RuntimeConfig["mode"]): string {
   return mode === "auto-publish"
     ? "当前是正式模式，全自动发布，可切换到开发模式。"
-    : "当前是开发模式，半自动发布，可切换到正式模式。";
+    : "当前是开发模式，自动存草稿并双重确认，不会自动发布，可切换到正式模式。";
 }
 
 function formatModeSwitchResult(mode: RuntimeConfig["mode"]): string {
   return mode === "auto-publish"
     ? "已切换到正式模式，全自动发布。"
-    : "已切换到开发模式，半自动发布。";
+    : "已切换到开发模式，自动存草稿并双重确认。";
 }
 
 const defaultDependencies: RunCommandDependencies = {
@@ -2908,7 +3031,10 @@ export async function runCommandReport(
           message: publishResult.message
         };
 
-        if (publishResult.status === "published") {
+        if (
+          publishResult.status === "published" ||
+          publishResult.status === "draft-saved"
+        ) {
           try {
             await deps.movePublishedVideoToUsed(
               allocation.videoPath,
@@ -2918,7 +3044,9 @@ export async function runCommandReport(
             result = {
               ...result,
               status: "failed",
-              message: `${publishResult.message}；移动已发布视频失败：${formatErrorMessage(moveError)}`
+              message: `${publishResult.message}；移动${
+                publishResult.status === "draft-saved" ? "已存草稿" : "已发布"
+              }视频失败：${formatErrorMessage(moveError)}`
             };
           }
         }

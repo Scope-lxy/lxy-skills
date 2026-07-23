@@ -4,6 +4,15 @@ import { runCommand } from "../../src/cli.js";
 import type { PickedArticleAssetSet } from "../../src/assets/article-image-picker.js";
 import type { WindowRunResult } from "../../src/types/run-result.js";
 
+vi.mock("../../src/assets/video-pool.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/assets/video-pool.js")>();
+
+  return {
+    ...actual,
+    movePublishedVideoToUsed: async () => "C:/企鹅号发布/used/test.mp4"
+  };
+});
+
 interface FakeLocatorSpec {
   count: number;
   countSequence?: number[];
@@ -87,6 +96,14 @@ function createPlaywrightLikePage(
   let forcedCaretReady = false;
   let forcedStartReady = false;
   const getSpec = (selector: string): FakeLocatorSpec => {
+    if (
+      selector === "role:button:存草稿" ||
+      selector === "text=保存成功" ||
+      selector.startsWith("exact-text:")
+    ) {
+      return { count: 1, visible: [true] };
+    }
+
     return specs[selector] ?? { count: 0, visible: [] };
   };
 
@@ -635,6 +652,9 @@ function createPlaywrightLikePage(
         options?: { name?: string | RegExp; exact?: boolean }
       ) {
         return createLocator(`role:${role}:${String(options?.name ?? "")}`);
+      },
+      getByText(text: string) {
+        return createLocator(`exact-text:${text}`);
       }
     }
   };
@@ -672,6 +692,8 @@ function createPenguinPublishPage(id: string) {
     async capturePrePublishEvidence(): Promise<string | null> {
       return null;
     },
+    async saveDraft() {},
+    async confirmSavedDraft() {},
     async clickPublish() {}
   };
 }
@@ -719,12 +741,12 @@ describe("runCommand", () => {
     const publishArticle = vi
       .fn()
       .mockResolvedValueOnce({
-        status: "ready-to-publish",
-        message: "已完成，停在发布前"
+        status: "draft-saved",
+        message: "已存草稿"
       })
       .mockResolvedValueOnce({
-        status: "ready-to-publish",
-        message: "已完成，停在发布前"
+        status: "draft-saved",
+        message: "已存草稿"
       });
     const connectBrowser = vi
       .fn()
@@ -753,8 +775,8 @@ describe("runCommand", () => {
     });
 
     expect(summary).toEqual([
-      "1窗口：a 已完成，停在发布前",
-      "2窗口：b 已完成，停在发布前"
+      "1窗口：a 已存草稿",
+      "2窗口：b 已存草稿"
     ]);
     expect(connectBrowser).toHaveBeenNthCalledWith(1, "ws://profile-1");
     expect(connectBrowser).toHaveBeenNthCalledWith(2, "ws://profile-2");
@@ -780,8 +802,8 @@ describe("runCommand", () => {
     );
     expect(writeRunEvent.mock.calls[0]?.[1]).toMatchObject({
       profileId: 1,
-      status: "ready-to-publish",
-      message: "已完成，停在发布前"
+      status: "draft-saved",
+      message: "已存草稿"
     });
     expect(browser1.close).toHaveBeenCalledOnce();
     expect(browser2.close).toHaveBeenCalledOnce();
@@ -875,7 +897,7 @@ describe("runCommand", () => {
       writeRunEvent: createWriteRunEventMock()
     });
 
-    expect(summary).toEqual(["17窗口：parallel 已完成，停在发布前"]);
+    expect(summary).toEqual(["17窗口：parallel 已存草稿"]);
 
     const titleFillAction = 'fill:input[placeholder="请输入标题名称"]:0:parallel';
     const titleFillIndices = actions
@@ -993,7 +1015,7 @@ describe("runCommand", () => {
       writeRunEvent: createWriteRunEventMock()
     });
 
-    expect(summary).toEqual(["21窗口：preview-only 已完成，停在发布前"]);
+    expect(summary).toEqual(["21窗口：preview-only 已存草稿"]);
     expect(actions).toContain(
       'click:.omui-dialog-wrapper.open li.omui-tab__label:has-text("上传封面"):0'
     );
@@ -1083,7 +1105,7 @@ describe("runCommand", () => {
       writeRunEvent: createWriteRunEventMock()
     });
 
-    expect(summary).toEqual(["22窗口：upload-input 已完成，停在发布前"]);
+    expect(summary).toEqual(["22窗口：upload-input 已存草稿"]);
     expect(
       actions.some((action) => action.includes("video-covers/upload-input.png"))
     ).toBe(false);
@@ -1135,7 +1157,7 @@ describe("runCommand", () => {
     );
   });
 
-  it("does not move a video when publish stops before final confirmation", async () => {
+  it("moves a video only after development mode confirms its saved draft", async () => {
     const movePublishedVideoToUsed = vi.fn();
 
     const summary = await runCommand("/发企鹅号 1窗口", {
@@ -1155,15 +1177,18 @@ describe("runCommand", () => {
       }),
       connectBrowser: vi.fn().mockResolvedValue(createBrowser()),
       publishArticle: async () => ({
-        status: "ready-to-publish" as const,
-        message: "已完成，停在发布前"
+        status: "draft-saved" as const,
+        message: "已存草稿"
       }),
       movePublishedVideoToUsed,
       writeRunEvent: createWriteRunEventMock()
     });
 
-    expect(summary).toEqual(["1窗口：a 已完成，停在发布前"]);
-    expect(movePublishedVideoToUsed).not.toHaveBeenCalled();
+    expect(summary).toEqual(["1窗口：a 已存草稿"]);
+    expect(movePublishedVideoToUsed).toHaveBeenCalledWith(
+      "C:/企鹅号发布/videos/a.mp4",
+      "C:/企鹅号发布"
+    );
   });
 
   it("reports a move failure after publishing so the video is not silently reused", async () => {
@@ -1220,8 +1245,8 @@ describe("runCommand", () => {
         }
 
         return {
-          status: "ready-to-publish" as const,
-          message: "已完成，停在发布前"
+          status: "draft-saved" as const,
+          message: "已存草稿"
         };
       }
     );
@@ -1253,9 +1278,9 @@ describe("runCommand", () => {
     });
 
     expect(summary).toEqual([
-      "1窗口：a 已完成，停在发布前",
+      "1窗口：a 已存草稿",
       "2窗口：b 发布失败：封面上传超时",
-      "3窗口：c 已完成，停在发布前"
+      "3窗口：c 已存草稿"
     ]);
     expect(publishArticle).toHaveBeenCalledTimes(3);
     expect(writeRunEvent).toHaveBeenCalledTimes(3);
@@ -1290,13 +1315,13 @@ describe("runCommand", () => {
       }),
       connectBrowser,
       publishArticle: async () => ({
-        status: "ready-to-publish" as const,
-        message: "已完成，停在发布前"
+        status: "draft-saved" as const,
+        message: "已存草稿"
       }),
       writeRunEvent: createWriteRunEventMock()
     });
 
-    expect(summary).toEqual(["5窗口：e 已完成，停在发布前"]);
+    expect(summary).toEqual(["5窗口：e 已存草稿"]);
     expect(connectBrowser).toHaveBeenCalledWith("http://127.0.0.1:9333");
   });
 
@@ -1409,7 +1434,7 @@ describe("runCommand", () => {
       writeRunEvent
     });
 
-    expect(summary).toEqual(["8窗口：happy 已完成，停在发布前"]);
+    expect(summary).toEqual(["8窗口：happy 已存草稿"]);
     expect(actions).toContain(
       'click:div.ProseMirror.ExEditor-basic[contenteditable="true"]:0'
     );
@@ -1497,7 +1522,7 @@ describe("runCommand", () => {
       expect.any(String),
       expect.objectContaining({
         profileId: 8,
-        status: "ready-to-publish"
+        status: "draft-saved"
       })
     );
   });
@@ -1784,7 +1809,7 @@ describe("runCommand", () => {
       writeRunEvent: createWriteRunEventMock()
     });
 
-    expect(summary).toEqual(["16窗口：twice 已完成，停在发布前"]);
+    expect(summary).toEqual(["16窗口：twice 已存草稿"]);
 
     const videoConfirmAction =
       'click:.omui-dialog-wrapper.open .omui-dialog-footer button.omui-button--primary:0';
@@ -1874,7 +1899,7 @@ describe("runCommand", () => {
       writeRunEvent: createWriteRunEventMock()
     });
 
-    expect(summary).toEqual(["26窗口：busy 已完成，停在发布前"]);
+    expect(summary).toEqual(["26窗口：busy 已存草稿"]);
     const videoConfirmAction =
       'click:.omui-dialog-wrapper.open .omui-dialog-footer button.omui-button--primary:0';
     const fillVideoTitleIndex = actions.indexOf(
@@ -1968,7 +1993,7 @@ describe("runCommand", () => {
       writeRunEvent: createWriteRunEventMock()
     });
 
-    expect(summary).toEqual(["19窗口：recover 已完成，停在发布前"]);
+    expect(summary).toEqual(["19窗口：recover 已存草稿"]);
     expect(actions).toContain(
       "setInputFiles:.omui-dialog-wrapper.open input[type=\"file\"][accept*=\"image\"]:0:C:/企鹅号发布/covers/封面-A版.jpg"
     );
@@ -2040,7 +2065,7 @@ describe("runCommand", () => {
       writeRunEvent: createWriteRunEventMock()
     });
 
-    expect(summary).toEqual(["17窗口：parallel 已完成，停在发布前"]);
+    expect(summary).toEqual(["17窗口：parallel 已存草稿"]);
 
     const uploadVideoIndex = actions.indexOf(
       "setInputFiles:input[name=\"Filedata\"][type=\"file\"]:0:C:/企鹅号发布/videos/parallel.mp4"
@@ -2144,7 +2169,7 @@ describe("runCommand", () => {
       reportProgress
     });
 
-    expect(summary).toEqual(["18窗口：heartbeat 已完成，停在发布前"]);
+    expect(summary).toEqual(["18窗口：heartbeat 已存草稿"]);
     expect(reportProgress).toHaveBeenCalledWith({
       profileId: 18,
       title: "heartbeat",
@@ -2220,7 +2245,7 @@ describe("runCommand", () => {
       writeRunEvent: createWriteRunEventMock()
     });
 
-    expect(summary).toEqual(["11窗口：caret 已完成，停在发布前"]);
+    expect(summary).toEqual(["11窗口：caret 已存草稿"]);
     expect(actions).toContain("bringToFront");
     expect(actions).toContain(
       'click:div.ProseMirror.ExEditor-basic[contenteditable="true"] p:0'
@@ -2363,7 +2388,7 @@ describe("runCommand", () => {
       writeRunEvent: createWriteRunEventMock()
     });
 
-    expect(summary).toEqual(["20窗口：reanchor 已完成，停在发布前"]);
+    expect(summary).toEqual(["20窗口：reanchor 已存草稿"]);
     expect(actions).toContain("forceEditorCaretBoundary:end");
     expect(actions).toContain("forceEditorCaretBoundary:start");
     expect(actions).toContain("click:button.exeditor-menu-basic-video:0");
@@ -2596,7 +2621,7 @@ describe("runCommand", () => {
       writeRunEvent: createWriteRunEventMock()
     });
 
-    expect(summary).toEqual(["11窗口：delay 已完成，停在发布前"]);
+    expect(summary).toEqual(["11窗口：delay 已存草稿"]);
     expect(actions).toContain(
       'fill:span.omui-inputautogrowing__inner[contenteditable="true"][data-placeholder*="标题"]:0:delay'
     );
@@ -2666,7 +2691,7 @@ describe("runCommand", () => {
       writeRunEvent: createWriteRunEventMock()
     });
 
-    expect(summary).toEqual(["14窗口：fresh 已完成，停在发布前"]);
+    expect(summary).toEqual(["14窗口：fresh 已存草稿"]);
     const restoreWaitIndex = actions.indexOf("waitForTimeout:10000");
     const forceClearTitleIndex = actions.indexOf("forceClearTitle");
     const forceClearEditorIndex = actions.indexOf("forceClearEditorDraftViaView");
@@ -2743,7 +2768,7 @@ describe("runCommand", () => {
       writeRunEvent: createWriteRunEventMock()
     });
 
-    expect(summary).toEqual(["14窗口：fresh 已完成，停在发布前"]);
+    expect(summary).toEqual(["14窗口：fresh 已存草稿"]);
     expect(actions).toContain("forceClearEditorDraftViaView");
     expect(actions).not.toContain("forceClearEditorDraft");
   });
@@ -2819,7 +2844,7 @@ describe("runCommand", () => {
       writeRunEvent: createWriteRunEventMock()
     });
 
-    expect(summary).toEqual(["19窗口：fresh 已完成，停在发布前"]);
+    expect(summary).toEqual(["19窗口：fresh 已存草稿"]);
     expect(
       actions.filter((action) => action === "forceClearEditorDraftViaView").length
     ).toBeGreaterThan(1);
@@ -2961,7 +2986,7 @@ describe("runCommand", () => {
       writeRunEvent: createWriteRunEventMock()
     });
 
-    expect(summary).toEqual(["15窗口：正确标题 已完成，停在发布前"]);
+    expect(summary).toEqual(["15窗口：正确标题 已存草稿"]);
     expect(fakePage.actions).toContain(
       'fill:input[placeholder*="标题"]:0:正确标题'
     );
@@ -2995,7 +3020,7 @@ describe("runCli", () => {
     expect(exitCode).toBe(1);
     expect(logSpy).toHaveBeenNthCalledWith(
       1,
-      "当前是开发模式，半自动发布，可切换到正式模式。"
+      "当前是开发模式，自动存草稿并双重确认，不会自动发布，可切换到正式模式。"
     );
     expect(errorSpy).toHaveBeenCalledWith(
       "已有发布任务在运行（命令=发视频 4-5），请等待当前任务结束，不要重试"
@@ -3039,8 +3064,8 @@ describe("runCli", () => {
     }));
     vi.doMock("../../src/penguin/publish-article.js", () => ({
       publishArticle: async () => ({
-        status: "ready-to-publish" as const,
-        message: "已完成，停在发布前"
+        status: "draft-saved" as const,
+        message: "已存草稿"
       })
     }));
     vi.doMock("playwright", () => ({
@@ -3061,9 +3086,9 @@ describe("runCli", () => {
     expect(exitCode).toBe(0);
     expect(logSpy).toHaveBeenNthCalledWith(
       1,
-      "当前是开发模式，半自动发布，可切换到正式模式。"
+      "当前是开发模式，自动存草稿并双重确认，不会自动发布，可切换到正式模式。"
     );
-    expect(logSpy).toHaveBeenNthCalledWith(2, "1窗口：a 已完成，停在发布前");
+    expect(logSpy).toHaveBeenNthCalledWith(2, "1窗口：a 已存草稿");
     expect(errorSpy).not.toHaveBeenCalled();
   });
 
@@ -3113,8 +3138,8 @@ describe("runCli", () => {
           "视频标题和封面已设置，正在等待上传完成；等待期间不要结束任务"
         );
         return {
-          status: "ready-to-publish" as const,
-          message: "已完成，停在发布前"
+          status: "draft-saved" as const,
+          message: "已存草稿"
         };
       }
     }));
@@ -3136,7 +3161,7 @@ describe("runCli", () => {
     expect(exitCode).toBe(0);
     expect(logSpy).toHaveBeenNthCalledWith(
       1,
-      "当前是开发模式，半自动发布，可切换到正式模式。"
+      "当前是开发模式，自动存草稿并双重确认，不会自动发布，可切换到正式模式。"
     );
     expect(logSpy).toHaveBeenNthCalledWith(
       2,
@@ -3146,7 +3171,7 @@ describe("runCli", () => {
       3,
       "3窗口：a 视频标题和封面已设置，正在等待上传完成；等待期间不要结束任务"
     );
-    expect(logSpy).toHaveBeenNthCalledWith(4, "3窗口：a 已完成，停在发布前");
+    expect(logSpy).toHaveBeenNthCalledWith(4, "3窗口：a 已存草稿");
     expect(errorSpy).not.toHaveBeenCalled();
   });
 
@@ -3200,8 +3225,8 @@ describe("runCli", () => {
     }));
     vi.doMock("../../src/penguin/publish-article.js", () => ({
       publishArticle: async () => ({
-        status: "ready-to-publish" as const,
-        message: "已完成，停在发布前"
+        status: "draft-saved" as const,
+        message: "已存草稿"
       })
     }));
     vi.doMock("playwright", () => ({
@@ -3220,7 +3245,7 @@ describe("runCli", () => {
     const exitCode = await runCli(["/发视频", "1窗口"]);
 
     expect(exitCode).toBe(0);
-    expect(logSpy).toHaveBeenCalledWith("1窗口：a 已完成，停在发布前");
+    expect(logSpy).toHaveBeenCalledWith("1窗口：a 已存草稿");
     expect(errorSpy).not.toHaveBeenCalled();
   });
 
@@ -3259,8 +3284,8 @@ describe("runCli", () => {
     }));
     vi.doMock("../../src/penguin/publish-article.js", () => ({
       publishArticle: async () => ({
-        status: "ready-to-publish" as const,
-        message: "已完成，停在发布前"
+        status: "draft-saved" as const,
+        message: "已存草稿"
       })
     }));
     vi.doMock("playwright", () => ({
@@ -3279,8 +3304,8 @@ describe("runCli", () => {
     const exitCode = await runCli(["发视频", "1-2"]);
 
     expect(exitCode).toBe(0);
-    expect(logSpy).toHaveBeenCalledWith("1窗口：a 已完成，停在发布前");
-    expect(logSpy).toHaveBeenCalledWith("2窗口：b 已完成，停在发布前");
+    expect(logSpy).toHaveBeenCalledWith("1窗口：a 已存草稿");
+    expect(logSpy).toHaveBeenCalledWith("2窗口：b 已存草稿");
     expect(errorSpy).not.toHaveBeenCalled();
   });
 
