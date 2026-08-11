@@ -1,0 +1,5 @@
+interface:
+  display_name: "重命名标题"
+  short_description: "从字幕原创生成指定风格标题，确认后批量改名字幕、视频和封面"
+  default_prompt: "Use $rename-titles to generate a batch of 急迫版 titles from my subtitle folder, then wait for confirmation before renaming."
+

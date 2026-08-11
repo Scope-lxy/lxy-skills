@@ -1,7 +1,10 @@
-node_modules/
-dist/
-/logs/
-.env
-playwright-report/
-test-results/
-config/penguinhao.config.json
+# ixBrowser runtime files
+ixBrowser_qq_publish/config/penguinhao.config.json
+ixBrowser_qq_publish/node_modules/
+ixBrowser_qq_publish/dist/
+
+# Generated files
+**/__pycache__/
+*.py[cod]
+.DS_Store
+Thumbs.db

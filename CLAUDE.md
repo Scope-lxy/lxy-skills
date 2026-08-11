@@ -1,40 +1,25 @@
-## Windows 中文乱码处理
+# lxy-skills Repository Rules
 
-- 这台机器主要在 Windows 上开发。PowerShell 显示中文源码时，可能会把正常中文显示成 `鑾峰彇` 这类乱码，看到乱码时，先当成“终端显示问题”，不要马上判断文件坏了。
-- 读中文文件时，优先用明确按 UTF-8 读取的方式，比如 `Get-Content -Encoding UTF8`、`py -X utf8`，或者支持 UTF-8 的编辑器/API。
+`AGENTS.md` is the source of truth for this repository. Keep `CLAUDE.md` as an exact copy. Update `AGENTS.md` first, then run `Copy-Item AGENTS.md CLAUDE.md -Force`.
 
-## 和用户沟通
+## Scope
 
-- 用户是产品经理背景的 vibe coder，懂产品和一些电脑基础，但通常不看代码。
-- 默认用中文沟通。先讲用户能感知到的行为变化、风险和结果，再讲必要的技术细节。
-- 不要把“让用户自己看代码”当成验收方式。能跑检查就主动跑，然后用简单中文说明结果。
+This repository contains only these personal skills:
 
-## 项目边界
+- `rename-titles`
+- `ixBrowser_qq_publish`
 
-- 这是私人定制的通用 skill，正式名称是 `ixBrowser_qq_publish`。
-- GitHub 仓库用于分发 skill；本机私有配置 `config/penguinhao.config.json` 不上传，只保留 `config/penguinhao.config.example.json`。
+Do not add bundled, vendor, or third-party skills without an explicit request.
 
-## 当前发布流程
+## Skill Layout
 
-- 支持 `发视频 1-2`、`发企鹅号 1-2`、`/发视频 1-2窗口`、`/发企鹅号 1-2窗口`。
-- 执行发布前要先提示当前模式：开发模式完成最终校验后会存草稿，不会发布；正式模式检查通过后会自动发布。
-- 每个窗口打开发布页并完成登录检查后，必须先等待 `10` 秒，让企鹅号旧草稿、标题和封面区域完成异步恢复；然后再强制清空标题区和正文编辑区。清空后要连续多次确认正文稳定为空，避免企鹅号异步恢复旧草稿。窗口不一定在最上方，所有关键点击、键盘、上传动作前都要把页面置前。
-- 正文搭建顺序是：先插两张正文配图，再把光标移到正文最前插视频，最后清理多余空行并做发布前校验。
-- 视频上传阶段要先开始上传，再尽早填写视频标题并上传视频封面，不要等视频传完才做这两步；真正的等待和确认统一收口到视频上传完成阶段。上传可能持续 `1-30` 分钟，等待期间每 `30` 秒输出一次进度心跳，优先从弹窗里读出百分比；如果读不到百分比，就回退成“已等待 xx 秒”的进度消息，明确提示不要提前结束任务。
-- 视频封面先在当前 `.mp4` 所在文件夹按既有文件名匹配逻辑查找同名或相似名图片；只有未命中时，才从 `video-covers` 文件夹挑选。
-- 如果外层 agent 因本地超时、静默等待或误判而再次启动同一条发布命令，底层必须直接拒绝第二次运行，返回“已有发布任务在运行，请等待，不要重试”，不能刷新页面打断正在上传的视频。
-- 最终校验目标是正文顺序 `视频 -> 配图1 -> 配图2`，并识别、清理视频和配图之间的空行。
-- 文章封面和创作声明在文章标题后、正文媒体前处理；AI 声明在正文媒体插入、视频确认和空行清理之后处理。
-- 发布前必须读取页面实际标题值，和当前视频文件名生成的标题完全一致才允许继续；标题不一致时先自动改回目标标题并复查，复查仍不一致才停止。
-- 文章封面上传后必须确认封面预览发生变化；如果预览不变，要直接报“文章封面上传后预览未变化”，不能继续完成流程。
-- 开发模式存草稿时，按钮按【存草稿】、【保存草稿】、【草稿】的顺序精确匹配。点击后必须以页面顶部出现的【保存成功】提示作为第一重成功信号，不能使用编辑器左下角的【已保存】自动保存提示；随后等待 `3` 秒，主动跳转到内容管理页，精确确认列表中存在当前标题，作为第二重成功信号。
-- 配图确认、标题回读、封面上传、声明确认、存草稿按钮、保存成功提示和发布按钮等非上传关键步骤后要短暂停顿，让页面状态先落稳再继续；视频上传开始后不能通过刷新页面或重跑命令来“重试”。
-- CLI 在长等待阶段要持续输出明确进度，例如视频上传已开始、标题和封面已设置、正在等待上传完成，以及“视频上传进度 xx% / 已等待 xx 秒，继续等待，不要结束任务”，避免外层 agent 因静默而误判流程已结束。
-- 开发模式只有顶部【保存成功】提示和内容管理页标题复核都通过后，才把已用 `.mp4` 移动到 `used`；正式模式则在确认发布成功后移动。失败或未确认时不移动视频。
+- Each skill lives in its own top-level directory.
+- Every skill must include a valid `SKILL.md` with `name` and `description` frontmatter.
+- Keep a skill's required scripts, references, tests, and agent metadata within that skill directory.
+- Update `README.md` whenever a skill is added, removed, renamed, or materially changes its installation process.
 
-## 验证和交付
+## Safety And Verification
 
-- 修改发布流程后至少运行 `npm test` 和 `npm run build`。
-- 只整理文档时可不跑完整测试，但要检查相关路径、命令、脚本名和 README/SKILL 是否一致。
-- 目前开发的项目不用太过考虑旧版本兼容性，用户更倾向保持代码干净简洁。
-- 回复要简洁，用中文说清楚：做了什么、会看到什么变化、怎么验证的、还有没有风险。
+- Never commit local configuration, account identifiers, cookies, tokens, generated dependency directories, or build output.
+- Commit an example configuration file when a skill needs one, and document how to create the local configuration separately.
+- Before pushing, inspect the staged diff, check that `AGENTS.md` and `CLAUDE.md` match, and scan tracked files for credentials or machine-specific paths.
