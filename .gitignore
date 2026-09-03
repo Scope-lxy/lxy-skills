@@ -8,3 +8,7 @@ ixBrowser_qq_publish/dist/
 *.py[cod]
 .DS_Store
 Thumbs.db
+
+# Local agent-tool rule files are not repository deliverables
+**/AGENTS.md
+**/CLAUDE.md

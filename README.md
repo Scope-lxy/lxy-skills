@@ -27,4 +27,4 @@
 
 ## 维护约定
 
-仓库规范以 [`AGENTS.md`](./AGENTS.md) 为准，`CLAUDE.md` 是它的同步副本。
+`AGENTS.md` 和 `CLAUDE.md` 仅供本地工具使用，不属于仓库交付物，不备份或提交到 GitHub；需要这些文件的本地工具可在仓库内使用，但它们已被 Git 忽略。

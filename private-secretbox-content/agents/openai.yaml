@@ -1,0 +1,7 @@
+interface:
+  display_name: "私密盲盒内容工坊"
+  short_description: "生成、优化并导出私密盲盒日记、盲盒、音频与心笺内容"
+  default_prompt: "使用 $private-secretbox-content 生成一批私密盲盒日记、盲盒文案、音频文案或心笺内容。"
+
+policy:
+  allow_implicit_invocation: true
